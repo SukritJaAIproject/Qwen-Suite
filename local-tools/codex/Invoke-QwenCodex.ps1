@@ -21,6 +21,16 @@
 #    Thai reason the model sees. They do NOT stop reads: a read-only job can Get-Content any
 #    file the user can, credential files included. list_codex_jobs therefore hides the answer
 #    of a job whose commands touched a secret folder and masks secret-looking strings.
+#  - Policy hook (2026-09-30): Codex runs policy_hook.py before every tool call; it applies the
+#    gateway's command_policy (run_command's hard blocks, secret folders included) and denies
+#    with a Thai reason. Codex skips an untrusted hook and runs the command when a hook fails,
+#    so before every job the bridge runs the hook's self-test and checks through
+#    `codex app-server` hooks/list that Codex sees it as trusted (Confirm-PolicyHook); a write
+#    job is refused when that fails. Every job folder is written into config.toml as
+#    trust_level = "untrusted": a repo's own .codex\config.toml would otherwise load in a
+#    full-access run and could switch hooks off (verified). --enable hooks is passed as well.
+#  - -Source openclaw|webui|mcp marks a job started from chat (codex_dispatch.py): its end
+#    notification goes where notifier.resolve_channels sends chat tasks.
 #  - At the end our model is unloaded (only if it is loaded, and only if this run started
 #    Codex - a refused or timed-out run never evicts the model another job or chat is using)
 #    and notifier.py is called.
@@ -63,7 +73,9 @@ param(
     [switch]$KeepModel,
     [switch]$Detach,
     [string]$JobId = '',
-    [string[]]$Config = @()
+    [string[]]$Config = @(),
+    [ValidateSet('', 'desktop', 'webui', 'openclaw', 'mcp')]
+    [string]$Source = ''
 )
 
 # Continue, not Stop: in Windows PowerShell 5.1 a native command that writes to stderr
@@ -83,6 +95,10 @@ $OllamaUrl = if ($env:QWEN_CODEX_OLLAMA_URL) { $env:QWEN_CODEX_OLLAMA_URL.TrimEn
 $PollSeconds = 60
 if ($env:QWEN_CODEX_POLL_SECONDS) { $PollSeconds = [Math]::Max(1, [int]$env:QWEN_CODEX_POLL_SECONDS) }
 $Helper = Join-Path $PSScriptRoot 'codex_jobs.py'
+$PolicyHookScript = Join-Path $PSScriptRoot 'policy_hook.py'
+# Codex's own hash of our hook as last read through hooks/list (see Confirm-PolicyHook).
+$PolicyTrustFile = Join-Path $CodexHome 'policy-hook.trust.json'
+$script:HookRunDir = ''
 $Utf8 = New-Object System.Text.UTF8Encoding($false)
 $KnownModels = @('qwen3-coder:30b', 'gpt-oss:20b')
 $script:CurrentJobId = $JobId
@@ -195,7 +211,7 @@ function Get-BridgeSettings {
 function Invoke-WithCodexEnv([scriptblock]$Body) {
     # Only the Codex process sees the dead proxy: the notifier (Telegram) and the python
     # helper run with the normal environment.
-    $names = 'CODEX_HOME', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_API_KEY'
+    $names = 'CODEX_HOME', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_API_KEY', 'QWEN_CODEX_RUN_DIR', 'QWEN_CODEX_JOB_ID'
     $saved = @{}
     foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n, 'Process') }
     try {
@@ -203,6 +219,10 @@ function Invoke-WithCodexEnv([scriptblock]$Body) {
         foreach ($n in 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY') { [Environment]::SetEnvironmentVariable($n, 'http://127.0.0.1:9', 'Process') }
         [Environment]::SetEnvironmentVariable('NO_PROXY', '127.0.0.1,localhost', 'Process')
         foreach ($n in 'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_API_KEY') { [Environment]::SetEnvironmentVariable($n, $null, 'Process') }
+        # policy_hook.py (a child of codex.exe) writes the commands it blocks into the run folder.
+        $hookDir = if ($script:HookRunDir) { $script:HookRunDir } else { $null }
+        [Environment]::SetEnvironmentVariable('QWEN_CODEX_RUN_DIR', $hookDir, 'Process')
+        [Environment]::SetEnvironmentVariable('QWEN_CODEX_JOB_ID', $(if ($script:CurrentJobId) { $script:CurrentJobId } else { $null }), 'Process')
         & $Body
     } finally {
         foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $saved[$n], 'Process') }
@@ -236,13 +256,53 @@ function Resolve-CodexExe {
 }
 
 # ------------------------------------------------------------------------ CODEX_HOME
-function Initialize-CodexHome {
+function ConvertTo-TomlKey([string]$Text) {
+    # A literal '...' key when possible (what Codex itself writes), else an escaped "..." key.
+    if (-not $Text.Contains("'") -and $Text -notmatch '[\r\n]') { return "'" + $Text + "'" }
+    return '"' + ($Text.Replace('\', '\\').Replace('"', '\"')) + '"'
+}
+
+function Remove-ProjectEntries([string]$Text) {
+    # [projects.'<dir>'] / [projects."<dir>"] tables with one trust_level line: the bridge
+    # appends "untrusted" ones per job, Codex itself may append "trusted" ones.
+    if ($null -eq $Text) { return $null }
+    return [regex]::Replace($Text, '(?m)^\r?\n?\[projects\.(?:''[^'']*''|"(?:[^"\\\r\n]|\\.)*")\]\r?\ntrust_level = "(trusted|untrusted)"\r?\n?', '')
+}
+
+function Get-PolicyHookCommand {
+    # Codex runs a hook command through cmd.exe, so the rendered command must not need quoting:
+    # no spaces, quotes or cmd metacharacters in the python or script path. On this machine
+    # both are plain (E:\localllm\webui-venv\Scripts\python.exe, ...\codex\policy_hook.py).
+    $python = Resolve-Python
+    if (-not $python -or -not (Test-Path -LiteralPath $PolicyHookScript -PathType Leaf)) { return '' }
+    foreach ($p in @($python, $PolicyHookScript)) { if ($p -match '[\s"''&|<>^%!]') { return '' } }
+    return ('{0} -X utf8 {1}' -f $python, $PolicyHookScript)
+}
+
+function Get-PolicyTrust {
+    try { return ([System.IO.File]::ReadAllText($PolicyTrustFile, $Utf8) | ConvertFrom-Json) } catch { return $null }
+}
+
+function Initialize-CodexHome([string[]]$UntrustedDirs = @()) {
     if ($Root.Contains("'")) { Stop-Bridge 2 "โฟลเดอร์ของชุดโปรแกรมมีเครื่องหมาย ' ในชื่อ ใช้กับ config ของ Codex ไม่ได้: $Root" }
     New-Item -ItemType Directory -Force -Path $CodexHome, (Join-Path $CodexHome 'rules') | Out-Null
     $stateFile = Join-Path $CodexHome '.bridge-generated.json'
     $state = @{}
     if (Test-Path -LiteralPath $stateFile) {
         try { ([System.IO.File]::ReadAllText($stateFile, $Utf8) | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $state[$_.Name] = [string]$_.Value } } catch { }
+    }
+    # Policy hook: its command, and the trust Codex needs before it runs it (hash from the last
+    # hooks/list, kept only while the command is unchanged).
+    $hookCommand = Get-PolicyHookCommand
+    if (-not $hookCommand) { $hookCommand = 'policy-hook-unavailable' }  # never trusted: write jobs are refused
+    $trustText = ''
+    $trust = Get-PolicyTrust
+    if ($trust -and [string]$trust.command -eq $hookCommand -and [string]$trust.key -and [string]$trust.hash -match '^sha256:[0-9a-f]{64}$') {
+        $trustText = "`n[hooks.state.{0}]`ntrusted_hash = `"{1}`"`n" -f (ConvertTo-TomlKey ([string]$trust.key)), [string]$trust.hash
+    }
+    $projectsText = ''
+    foreach ($d in @($UntrustedDirs | Where-Object { $_ } | Select-Object -Unique)) {
+        $projectsText += "`n[projects.{0}]`ntrust_level = `"untrusted`"`n" -f (ConvertTo-TomlKey $d)
     }
     $pairs = @(
         @{ Name = 'config'; Template = 'config.template.toml'; Target = (Join-Path $CodexHome 'config.toml') },
@@ -253,14 +313,18 @@ function Initialize-CodexHome {
         $template = Join-Path $PSScriptRoot $p.Template
         if (-not (Test-Path -LiteralPath $template)) { Stop-Bridge 2 "ไม่พบไฟล์แม่แบบ $template" }
         $text = [System.IO.File]::ReadAllText($template, $Utf8).Replace('{{ROOT}}', $Root)
+        if ($p.Name -eq 'config') {
+            # The trust placeholder is a comment line, so the template itself stays valid TOML.
+            $text = [regex]::Replace($text, '(?m)^# \{\{POLICY_HOOK_TRUST\}\}.*$', $trustText.Replace('$', '$$'))
+            $text = $text.Replace('{{POLICY_HOOK_COMMAND}}', $hookCommand) + $projectsText
+        }
         $current = $null
         if (Test-Path -LiteralPath $p.Target) { $current = [System.IO.File]::ReadAllText($p.Target, $Utf8) }
+        # The recorded hash leaves out [projects] trust entries: the bridge writes one per job
+        # folder, and Codex may add its own; neither is an outside change worth a backup.
+        $expected = Get-Sha256Text (Remove-ProjectEntries $text)
         if ($current -cne $text) {
-            # Codex itself appends [projects.'<cwd>'] trust_level = "trusted" when a job runs
-            # with write access; dropping that on the next run is expected, not worth a backup.
-            $comparable = $current
-            if ($null -ne $comparable) { $comparable = [regex]::Replace($comparable, '(?m)^\r?\n?\[projects\.''[^'']*''\]\r?\ntrust_level = "(trusted|untrusted)"\r?\n?', '') }
-            if ($null -ne $current -and $state.ContainsKey($p.Name) -and (Get-Sha256Text $current) -ne $state[$p.Name] -and (Get-Sha256Text $comparable) -ne $state[$p.Name]) {
+            if ($null -ne $current -and $state.ContainsKey($p.Name) -and (Get-Sha256Text $current) -ne $state[$p.Name] -and (Get-Sha256Text (Remove-ProjectEntries $current)) -ne $state[$p.Name]) {
                 # Changed since the bridge wrote it (a TUI session saving a choice, or a hand
                 # edit). The template wins; the changed copy is kept for whoever made it.
                 $bak = $p.Target + '.' + (Get-Date).ToString('yyyyMMdd-HHmmss') + '.bak'
@@ -269,7 +333,7 @@ function Initialize-CodexHome {
             }
             [System.IO.File]::WriteAllText($p.Target, $text, $Utf8)
         }
-        $state[$p.Name] = Get-Sha256Text $text
+        $state[$p.Name] = $expected
     }
     [System.IO.File]::WriteAllText($stateFile, ($state | ConvertTo-Json), $Utf8)
     # Only the bridge's own rules stay active. A TUI "always allow" writes an allow rule
@@ -434,6 +498,70 @@ function Invoke-Helper([string[]]$HelperArgs) {
     } finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
 }
 
+function Test-PolicyHookSelf {
+    # policy_hook.py --selftest: python starts, command_policy imports and known commands get
+    # the right answer. Codex runs a hook that cannot start as if it had said "allow".
+    $python = Resolve-Python
+    if (-not $python) { return 'ไม่พบ python สำหรับ policy_hook.py' }
+    $out = (& $python -X utf8 $PolicyHookScript --selftest 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        $short = ($out -replace '\s+', ' ')
+        if ($short.Length -gt 300) { $short = $short.Substring(0, 300) }
+        return ('policy_hook.py --selftest ไม่ผ่าน (exit {0}): {1}' -f $LASTEXITCODE, $short)
+    }
+    return $null
+}
+
+function Confirm-PolicyHook([string]$Cwd, [string[]]$UntrustedDirs = @()) {
+    # $null when Codex will run our policy hook before every tool call in $Cwd, else the reason.
+    # Codex computes the hook's hash itself; hooks/list returns it, and the bridge trusts
+    # exactly the command its own template rendered (first run, or after a Codex update that
+    # changed the hash), then asks again to confirm.
+    $cmd = Get-PolicyHookCommand
+    if (-not $cmd) { return 'ไม่พบ python หรือ policy_hook.py (หรือ path มีช่องว่าง/อักขระพิเศษ) จึงเปิด hook นโยบายคำสั่งไม่ได้' }
+    $self = Test-PolicyHookSelf
+    if ($self) { return $self }
+    $h = $null
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        $listing = Invoke-Helper @('hooks', $CodexExe, $CodexHome, $Cwd)
+        if (-not $listing -or (Get-Prop $listing 'ok') -ne $true) { return ('ถาม Codex เรื่อง hooks ไม่ได้: ' + [string](Get-Prop $listing 'error')) }
+        $all = @(@(Get-Prop $listing 'hooks') | Where-Object { $_ })
+        $ours = @($all | Where-Object { [string](Get-Prop $_ 'source') -eq 'user' -and [string](Get-Prop $_ 'command') -eq $cmd })
+        if ($ours.Count -ne 1) { return ('Codex ไม่เห็น hook นโยบายคำสั่งใน config.toml (พบ {0} รายการ)' -f $ours.Count) }
+        $h = $ours[0]
+        $foreign = @($all | Where-Object { [string](Get-Prop $_ 'command') -ne $cmd })
+        if ($foreign.Count) {
+            Write-BridgeLog ('other hooks Codex sees (not run unless trusted): ' + (($foreign | ForEach-Object { '{0} [{1}]' -f (Get-Prop $_ 'key'), (Get-Prop $_ 'trustStatus') }) -join '; '))
+        }
+        $ready = ([string](Get-Prop $h 'trustStatus') -eq 'trusted') -and ((Get-Prop $h 'enabled') -ne $false) -and
+            ([string](Get-Prop $h 'eventName') -eq 'preToolUse') -and ([string](Get-Prop $h 'matcher') -eq '*')
+        if ($ready) { return $null }
+        if ($attempt -eq 2) { break }
+        $hash = [string](Get-Prop $h 'currentHash')
+        $key = [string](Get-Prop $h 'key')
+        if ($hash -notmatch '^sha256:[0-9a-f]{64}$' -or -not $key) { return ('Codex ไม่ส่ง hash ของ hook มา (trustStatus {0})' -f (Get-Prop $h 'trustStatus')) }
+        $trust = @{ key = $key; command = $cmd; hash = $hash; codex_version = [string]$CodexVersion; trusted_at = (Get-Date).ToString('o') }
+        [System.IO.File]::WriteAllText($PolicyTrustFile, ($trust | ConvertTo-Json -Compress), $Utf8)
+        Write-BridgeLog ("policy hook trusted for Codex {0}: {1} = {2}" -f $CodexVersion, $key, $hash)
+        Initialize-CodexHome $UntrustedDirs
+    }
+    return ('Codex ยังไม่เชื่อถือ hook นโยบายคำสั่ง (trustStatus {0}, enabled {1})' -f (Get-Prop $h 'trustStatus'), (Get-Prop $h 'enabled'))
+}
+
+function Get-UntrustedDirs([string[]]$Dirs) {
+    # Job folders to mark trust_level = "untrusted" (case-insensitive de-dup: TOML rejects a
+    # repeated table).
+    $seen = @{}
+    $out = @()
+    foreach ($d in @($Dirs | Where-Object { $_ })) {
+        $v = ([string]$d).TrimEnd('\')
+        if ($v -match '^[A-Za-z]:$') { $v += '\' }
+        $k = $v.ToLowerInvariant()
+        if (-not $seen.ContainsKey($k)) { $seen[$k] = $true; $out += $v }
+    }
+    return $out
+}
+
 $BlockedParts = @('.aws', '.azure', '.gnupg', '.kube', '.ssh', 'credentials', 'login data', 'web data', '.claude', '.codex', '.openclaw')
 
 function Resolve-WorkFolder([string]$Path, [string]$What) {
@@ -573,11 +701,13 @@ if ($Kind -eq 'check') {
     Say ("codex.exe : {0} (v{1})" -f $CodexExe, $CodexVersion)
     Say ("CODEX_HOME: {0}" -f $CodexHome)
     $features = @(Invoke-WithCodexEnv { & $CodexExe features list 2>$null })
-    $mustBeOff = 'apps', 'plugins', 'browser_use', 'in_app_browser', 'computer_use', 'image_generation', 'multi_agent', 'goals', 'guardian_approval', 'code_mode_host', 'skill_mcp_dependency_install', 'tool_suggest', 'fast_mode', 'remote_compaction_v2', 'secret_auth_storage', 'in_app_updates', 'hooks', 'memories', 'workspace_dependencies'
+    $mustBeOff = 'apps', 'plugins', 'browser_use', 'in_app_browser', 'computer_use', 'image_generation', 'multi_agent', 'goals', 'guardian_approval', 'code_mode_host', 'skill_mcp_dependency_install', 'tool_suggest', 'fast_mode', 'remote_compaction_v2', 'secret_auth_storage', 'in_app_updates', 'memories', 'workspace_dependencies'
     $on = @($features | Where-Object { $_ -match '^(\S+)\s.*\strue\s*$' -and $mustBeOff -contains $Matches[1] } | ForEach-Object { ($_ -split '\s+')[0] })
+    $hooksOn = @($features | Where-Object { $_ -match '^hooks\s.*\strue\s*$' }).Count -gt 0
     if ($features.Count -eq 0) { $problems++; Say '[!] อ่านรายการฟีเจอร์ของ Codex ไม่ได้' }
     elseif ($on.Count) { $problems++; Say ('[!] ฟีเจอร์ที่ควรปิดแต่ยังเปิด: ' + ($on -join ', ')) }
-    else { Say '[ok] ฟีเจอร์คลาวด์/เบราว์เซอร์/ปลั๊กอิน/hooks ปิดครบ' }
+    elseif (-not $hooksOn) { $problems++; Say '[!] ฟีเจอร์ hooks ปิดอยู่ - hook นโยบายคำสั่งจะไม่ทำงาน' }
+    else { Say '[ok] ฟีเจอร์คลาวด์/เบราว์เซอร์/ปลั๊กอิน ปิดครบ, hooks เปิด (เฉพาะ hook นโยบายคำสั่งของ bridge)' }
     $modelsJson = Invoke-WithCodexEnv { & $CodexExe debug models 2>$null | Out-String }
     $slugs = @()
     try { $slugs = @(($modelsJson | ConvertFrom-Json).models | ForEach-Object { $_.slug }) } catch { }
@@ -593,7 +723,7 @@ if ($Kind -eq 'check') {
     # anything else ends in a connection error - and no model is ever asked.
     $stdin = Join-Path $probeDir 'prompt.txt'; [System.IO.File]::WriteAllText($stdin, 'check', $Utf8)
     $errFile = Join-Path $probeDir 'stderr.txt'; $outFile = Join-Path $probeDir 'events.jsonl'
-    $argsCheck = @('exec', '--strict-config', '--json', '--ephemeral', '--skip-git-repo-check', '-s', 'read-only', '-C', $probeDir, '-c', 'model_providers.ollama_local.base_url="http://127.0.0.1:9/v1"', '-')
+    $argsCheck = @('exec', '--strict-config', '--enable', 'hooks', '--json', '--ephemeral', '--skip-git-repo-check', '-s', 'read-only', '-C', $probeDir, '-c', 'model_providers.ollama_local.base_url="http://127.0.0.1:9/v1"', '-')
     $p = Invoke-WithCodexEnv { Start-Process -FilePath $CodexExe -ArgumentList (($argsCheck | ForEach-Object { Format-NativeArg $_ }) -join ' ') -RedirectStandardInput $stdin -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WorkingDirectory $probeDir -NoNewWindow -PassThru }
     $null = $p.Handle
     if (-not $p.WaitForExit(120000)) { Stop-ProcessTree $p.Id }
@@ -602,6 +732,12 @@ if ($Kind -eq 'check') {
     if ($errText -match '(?i)unknown configuration field|unknown (field|variant|key)|invalid type|error loading config|unrecognized') {
         $problems++; Say '[!] config.toml มีคีย์ที่ Codex รุ่นนี้ไม่รู้จัก (--strict-config):'; Say (($errText.Trim() -split "`n" | Select-Object -Last 3) -join "`n")
     } else { Say '[ok] config ผ่าน --strict-config (ทดสอบกับพอร์ตปิด 127.0.0.1:9 ไม่มีการเรียกโมเดล)' }
+    # Policy hook: self-test + Codex sees it as trusted (trusts it on the first check).
+    $hookProblem = Confirm-PolicyHook $probeDir (Get-UntrustedDirs @($probeDir))
+    if ($hookProblem) {
+        $problems++; Say ('[!] hook นโยบายคำสั่ง: ' + $hookProblem)
+        if ([string]$Settings.write_mode -ne 'disabled') { Say '    งานแก้ไขไฟล์ (-Write) จะถูกปฏิเสธจนกว่าจะแก้' }
+    } else { Say '[ok] hook นโยบายคำสั่ง (policy_hook.py) ผ่าน self-test และ Codex เชื่อถือแล้ว - ตรวจทุกคำสั่งก่อนรัน' }
     Say ("โหมดแก้ไขไฟล์ (write_mode): {0}" -f $Settings.write_mode)
     if (Test-OllamaUp) {
         $loaded = @(Get-LoadedModels | ForEach-Object { Get-Prop $_ 'name' })
@@ -653,12 +789,20 @@ if ($Kind -eq 'tui') {
     try {
         $busy = Get-OllamaBusyReason $Model ([int]$Settings.recent_activity_minutes)
         if ($busy) { Stop-Bridge 3 ('ยังไม่เปิดโหมดโต้ตอบ: ' + $busy) }
+        $untrusted = Get-UntrustedDirs (@($WorkDir, (Get-GitTop $WorkDir)) + $AddDirs)
+        Initialize-CodexHome $untrusted
+        $hookProblem = Confirm-PolicyHook $WorkDir $untrusted
+        if ($hookProblem) {
+            Write-BridgeLog ('tui policy hook: ' + $hookProblem)
+            if ($JobMode -ne 'read-only') { Stop-Bridge 2 ('ไม่เปิดโหมดโต้ตอบแบบแก้ไขไฟล์: ' + $hookProblem) }
+            Say ('คำเตือน: hook นโยบายคำสั่งไม่พร้อม (' + $hookProblem + ')')
+        }
         try { $Host.UI.RawUI.WindowTitle = 'Qwen Codex - โหมดโต้ตอบ' } catch { }
         Say ("Qwen Codex (โหมดโต้ตอบ) - โฟลเดอร์ {0}, โมเดล {1}, โหมด {2}" -f $WorkDir, $Model, $JobMode)
         Say 'ทุกขั้นช้า (โมเดลรันบน CPU) ถ้า Codex เสนอให้ติดตั้ง sandbox ของ Windows ให้เลือกไม่ติดตั้ง/ออก จนกว่าจะตัดสินใจเรื่องนี้'
         Write-BridgeLog ("tui start cwd={0} model={1} mode={2}" -f $WorkDir, $Model, $JobMode)
         # Interactive: the person at the console answers Codex's own approval questions.
-        $tuiArgs = @('--strict-config') + $sandboxArgs + @('-a', 'on-request', '-C', $WorkDir, '-m', $Model) + $providerOverride + $extraConfig
+        $tuiArgs = @('--strict-config', '--enable', 'hooks') + $sandboxArgs + @('-a', 'on-request', '-C', $WorkDir, '-m', $Model) + $providerOverride + $extraConfig
         foreach ($d in $AddDirs) { $tuiArgs += @('--add-dir', $d) }
         Push-Location -LiteralPath $WorkDir
         $tuiStarted = $true
@@ -763,13 +907,14 @@ if ($PromptFile -and $PromptFile.StartsWith($pendingDir + '\', [StringComparison
 }
 $jobTimer = [Diagnostics.Stopwatch]::StartNew()
 
+$JobSource = if ($Source) { $Source } else { 'desktop' }
 $result = [ordered]@{
     id = $JobId; kind = $Kind; title = $Title; status = 'failed'; exit_code = 1; mode = $JobMode; model = $Model
-    cwd = $WorkDir; project = $(if ($Project) { $Project.slug } else { '' }); run_dir = $RunDir
+    cwd = $WorkDir; project = $(if ($Project) { $Project.slug } else { '' }); run_dir = $RunDir; source = $JobSource
     codex_exe = $CodexExe; codex_version = [string]$CodexVersion; queued_at = (Get-Date).ToString('o')
 }
-Add-JobEvent @{ event = 'queued'; id = $JobId; kind = $Kind; title = $Title; mode = $JobMode; model = $Model; cwd = $WorkDir; run_dir = $RunDir; pid = $PID }
-Write-BridgeLog ("queued {0} mode={1} model={2} cwd={3} run_dir={4}" -f $Kind, $JobMode, $Model, $WorkDir, $RunDir)
+Add-JobEvent @{ event = 'queued'; id = $JobId; kind = $Kind; title = $Title; mode = $JobMode; model = $Model; cwd = $WorkDir; run_dir = $RunDir; pid = $PID; source = $JobSource }
+Write-BridgeLog ("queued {0} mode={1} model={2} source={3} cwd={4} run_dir={5}" -f $Kind, $JobMode, $Model, $JobSource, $WorkDir, $RunDir)
 
 $script:Outcome = $null
 function Complete-Job([int]$Code, [string]$Status, [string]$ErrorText) {
@@ -797,6 +942,17 @@ try {
     }
     $result.wait_minutes = [Math]::Round($jobTimer.Elapsed.TotalMinutes, 1)
 
+    # Policy hook: the job folders are marked untrusted in config.toml (no repo .codex config,
+    # hooks or rules), and Codex must see our hook as trusted - else a write job is refused.
+    $untrusted = Get-UntrustedDirs (@($WorkDir, $GitTop) + $AddDirs)
+    Initialize-CodexHome $untrusted
+    $hookProblem = Confirm-PolicyHook $WorkDir $untrusted
+    if ($hookProblem) {
+        Write-BridgeLog ('policy hook: ' + $hookProblem)
+        if ($JobMode -ne 'read-only') { Complete-Job 2 'failed' ('ไม่เริ่มงานแก้ไขไฟล์เพราะ hook นโยบายคำสั่งไม่พร้อม: ' + $hookProblem) }
+        $result.policy_hook = 'unverified: ' + $hookProblem
+    } else { $result.policy_hook = 'trusted' }
+
     if ($Kind -eq 'review') {
         $lines = Get-ReviewDiffLines $WorkDir
         $result.diff_lines = $lines
@@ -807,7 +963,7 @@ try {
     }
 
     # ------------------------------------------------------------- the Codex command line
-    $common = @('--strict-config') + $sandboxArgs + @('-C', $WorkDir) + $providerOverride + $extraConfig
+    $common = @('--strict-config', '--enable', 'hooks') + $sandboxArgs + @('-C', $WorkDir) + $providerOverride + $extraConfig
     if ($JobMode -ne 'read-only') {
         $writable = @($AddDirs)
         if ($Project) { New-Item -ItemType Directory -Force -Path $Project.outputs | Out-Null; $writable += $Project.outputs }
@@ -823,7 +979,7 @@ try {
         } else {
             $note = "[Job mode: write. Work inside $WorkDir."
             if ($Project) { $note += " Put produced files in $($Project.outputs)." }
-            $note += ']'
+            $note += ' A safety policy checks every command; a blocked one returns its reason - do not retry it another way.]'
         }
         if ($OutputSchema) { $note += ' [The final answer must be only JSON that matches the given schema.]' }
         [System.IO.File]::WriteAllText($promptCopy, ($note + "`n`n" + $promptText.Trim() + "`n"), $Utf8)
@@ -838,18 +994,35 @@ try {
         if ($promptText.Trim()) { $codexArgs += '-' }
     }
     $result.codex_args = ($codexArgs | ForEach-Object { Format-NativeArg $_ }) -join ' '
+    # Write jobs change files through shell commands (no apply_patch on 0.146, so no
+    # file_change events): a size+mtime listing before and after tells what changed.
+    $snapFile = Join-Path $RunDir 'files-before.json'
+    if ($JobMode -ne 'read-only') {
+        $snapRoots = @($WorkDir) + @($AddDirs)
+        if ($Project -and -not (Test-Under $Project.outputs $WorkDir)) { $snapRoots += $Project.outputs }
+        $snap = Invoke-Helper @('snapshot', $snapFile, (($snapRoots | Where-Object { $_ } | Select-Object -Unique) -join ';'))
+        if (-not $snap -or (Get-Prop $snap 'ok') -ne $true) { Write-BridgeLog ('snapshot failed: ' + (Get-Prop $snap 'error')) }
+    }
     Add-JobEvent @{ event = 'started'; id = $JobId; pid = $PID }
     Write-BridgeLog ('start codex: ' + $result.codex_args)
     Say ("เริ่มงาน {0} ({1}, {2}) ในโฟลเดอร์ {3}" -f $JobId, $Kind, $JobMode, $WorkDir)
 
+    $script:HookRunDir = $RunDir
     $codexProc = Invoke-WithCodexEnv {
         Start-Process -FilePath $CodexExe -ArgumentList $result.codex_args -RedirectStandardInput $promptCopy -RedirectStandardOutput $eventsFile -RedirectStandardError $stderrFile -WorkingDirectory $WorkDir -NoNewWindow -PassThru
     }
+    $script:HookRunDir = ''
     $null = $codexProc.Handle  # keeps ExitCode readable after exit (Windows PowerShell quirk)
     $result.codex_pid = $codexProc.Id
     $timeoutMs = [int][Math]::Min([double]$MaxMinutes * 60000, [double][int]::MaxValue)
-    if (-not $codexProc.WaitForExit($timeoutMs)) {
-        Stop-ProcessTree $codexProc.Id
+    $timedOut = -not $codexProc.WaitForExit($timeoutMs)
+    if ($timedOut) { Stop-ProcessTree $codexProc.Id }
+    if (Test-Path -LiteralPath $snapFile) {
+        $changed = Invoke-Helper @('changes', $snapFile)
+        if ($changed -and (Get-Prop $changed 'ok') -eq $true) { $result.changed_files = $changed }
+        Remove-Item -LiteralPath $snapFile -Force -ErrorAction SilentlyContinue
+    }
+    if ($timedOut) {
         $result.summary = Invoke-Helper @('summarize', $eventsFile)
         Complete-Job 7 'failed' ("เกินเวลาที่กำหนด {0} นาที หยุดงานแล้ว" -f $MaxMinutes)
     }
@@ -930,12 +1103,14 @@ try { [System.IO.File]::WriteAllText((Join-Path $RunDir 'result.json'), ($result
 $final = [string](Get-Prop $result.summary 'final_message')
 $finalShort = if ($final.Length -gt 1000) { $final.Substring(0, 1000) + ' ...' } else { $final }
 # touched_sensitive_paths: list_codex_jobs then shows no part of this answer in chat.
-Add-JobEvent @{ event = 'finished'; id = $JobId; status = $status; exit_code = $code; minutes = $result.minutes; final_message = $finalShort; error = $errorText; touched_sensitive_paths = [bool](Get-Prop $result.summary 'touched_sensitive_paths') }
+$finishedEvent = @{ event = 'finished'; id = $JobId; status = $status; exit_code = $code; minutes = $result.minutes; final_message = $finalShort; error = $errorText; touched_sensitive_paths = [bool](Get-Prop $result.summary 'touched_sensitive_paths') }
+if ($result.Contains('changed_files')) { $finishedEvent['files_changed_count'] = [int](Get-Prop $result.changed_files 'total') }
+Add-JobEvent $finishedEvent
 Write-BridgeLog ("finished status={0} exit={1} minutes={2} {3}" -f $status, $code, $result.minutes, $errorText)
 if (-not $NoNotify -and $Settings.notify) {
     $spec = Join-Path $RunDir 'notify.json'
     $notifyStatus = if ($status -eq 'completed') { 'completed' } else { 'failed' }
-    [System.IO.File]::WriteAllText($spec, (@{ tools_dir = $HelperToolsDir; title = ('Qwen Codex: ' + $Title); status = $notifyStatus; minutes = $result.minutes; dry_run = [bool]$NotifyDryRun } | ConvertTo-Json -Compress), $Utf8)
+    [System.IO.File]::WriteAllText($spec, (@{ tools_dir = $HelperToolsDir; title = ('Qwen Codex: ' + $Title); status = $notifyStatus; minutes = $result.minutes; dry_run = [bool]$NotifyDryRun; source = $Source; job_id = $JobId } | ConvertTo-Json -Compress), $Utf8)
     $sent = Invoke-Helper @('notify', $spec)
     if ($sent) { Write-BridgeLog ('notify: ' + ($sent | ConvertTo-Json -Compress)) }
     Remove-Item -LiteralPath $spec -Force -ErrorAction SilentlyContinue

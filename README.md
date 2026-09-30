@@ -284,7 +284,7 @@ Ollama 0.32.9 คอมไพล์ CUDA v13 ที่ไม่รองรั�
 | พอร์ต | บริการ | ไฟล์ |
 |---|---|---|
 | 3000 | Open WebUI | `start-webui.ps1` |
-| 8765 | Local Computer Tools (MCP เต็ม **62 tools** — 36 เดิม + 26 จากหัวข้อ "ความสามารถแบบ Codex") | `local-tools\server.py` |
+| 8765 | Local Computer Tools (MCP เต็ม **71 tools** — 36 เดิม + 26 จากหัวข้อ "ความสามารถแบบ Codex" + 9 จากหัวข้อ "งานชุดที่ 3") | `local-tools\server.py` |
 | 8766 | Permission gateway สำหรับ Open WebUI (2 tools: `local_read`, `local_action`) | `local-tools\fast_server.py --source webui` |
 | 8767 | Permission gateway สำหรับ OpenClaw (Telegram/WhatsApp/LINE) | `local-tools\fast_server.py --source openclaw` |
 | 8770 | Smart Model Router | `ai-services\router.py` |
@@ -601,10 +601,9 @@ Heartbeat ของ OpenClaw: เดิมทุก 30 นาทีจะรั�
 
 ### รอเจ้าของเครื่องตัดสินใจ
 
-- **Qwen Codex แก้ไฟล์ได้หรือไม่** — `data\codex-bridge.json` ค่า `write_mode`: `disabled` (ตอนนี้ อ่านอย่างเดียว) · `windows-sandbox` (ครั้งแรกที่ใช้ Codex จะเปลี่ยน ACL ของโฟลเดอร์งานและโฟลเดอร์ที่เขียนได้ เช่น TEMP) · `full-access` (คำสั่งของโมเดลรันด้วยสิทธิ์ผู้ใช้เต็ม มีแค่กฎคำสั่งกั้น)
 - **รูปแบบหนังสือใน `/letter`** ทำตามระเบียบงานสารบรรณ (หนังสือภายนอก / บันทึกข้อความ) — ตรวจว่าตรงแบบของ กฟผ. หรือไม่
 - **ส่งไฟล์วิดีโอทาง Telegram** — `data\notify.json` ค่า `video_media`: `true` (ตอนนี้) ส่ง mp4 ≤20 MB หรือภาพตัวอย่าง · `false` ส่งแค่ชื่อ/สถานะ
-- ข้อจากแผนที่ยังไม่ทำจนกว่าจะสั่ง: เริ่มงาน Codex จากแชท (เปิดช่องคำสั่งที่ 2 จากแชทที่ไม่ถามยืนยัน) · สร้าง/แก้รูป (Runway ใช้เครดิตและส่ง prompt ขึ้นคลาวด์ หรือโหลด Stable Diffusion 2-7 GB — E: เหลือ ~11 GB, SDXL-Turbo ห้ามใช้เชิงพาณิชย์ ซึ่งกระทบช่อง HansaKids) · git repo ของชุดนี้ · จับภาพหน้าจอส่ง Telegram (ข้อมูลงานอาจหลุดขึ้นคลาวด์) · Codex เป็น MCP server ให้โปรแกรมอื่น · ส่วนเสริม AI ใน VS Code · LaTeX (Tectonic) · นำเข้าไฟล์จาก agent อื่น
+- ตัดสินแล้ว 30 ก.ย.: Codex แบบ full-access + สั่งจากแชทได้ · คลังเอกสาร B781001/OCPP · Whisper small · รูปด้วย Runway · Outlook อ่าน+ร่าง · สรุปเช้า 07:00 · tunnel/LINE · git repo · ภาพหน้าจอ → ดูหัวข้อ "งานชุดที่ 3"
 
 ### รอ eGPU (บน CPU slot เดียวไม่คุ้ม — ทุกข้อคือรอบโมเดลเต็มครั้งละหลายนาที)
 
@@ -618,3 +617,23 @@ subagents หลายตัวพร้อมกัน (ต้อง `OLLAMA_NU
 - สคริปต์ .ps1 ที่มีภาษาไทย (`dictate.ps1`, `Invoke-QwenCodex.ps1`, `Start-QwenCodex.ps1`) ต้องเป็น UTF-8 **มี BOM** ไม่งั้น Windows PowerShell 5.1 อ่านเพี้ยน
 - ตัวติดตั้ง: `Check-PayloadParity.py` ไม่ตรวจโฟลเดอร์ `openclaw-tools` (สกิล) และไม่ฟ้องไฟล์ใหม่ที่ยังไม่ได้คัดลอกเข้า payload — ต้องคัดลอกตามรายการเอง · `Configure-OpenClaw.py` เขียน AGENTS.md ชุดใหม่นี้ให้แล้ว
 - คีย์ลัด Ctrl+Alt+Q / D ไม่ตอบสนองหลังติดตั้ง → sign out แล้ว sign in ใหม่
+
+
+## งานชุดที่ 3 — 30 ก.ย. 2026 (ค่ำ)
+
+| ความสามารถ | ใช้ที่ไหน | วิธีใช้ |
+|---|---|---|
+| **สั่งงาน Codex จากแชท (full-access)** | WebUI + Telegram | "ให้ Codex แก้สคริปต์ ... ในโปรเจกต์ X" → `start_codex_job` ได้ job_id ทันที งานรันเบื้องหลังเมื่อเครื่องว่าง (มักรอให้แชทเงียบ 15 นาที) เสร็จแล้วแจ้ง Telegram · `get_codex_job` ดูผล · คำสั่งของโมเดลรันด้วยสิทธิ์ผู้ใช้เต็ม แต่ผ่าน `policy_hook.py` ที่ใช้กฎเดียวกับ `run_command` (บล็อก ไม่ถาม) · ห้ามรันใน `E:\localllm`, โฟลเดอร์โปรไฟล์, AppData, root ของไดรฟ์ |
+| **ค้นคลังเอกสาร B781001 / OCPP** | WebUI + Telegram | "ในแบบ B781001 K5 K6 feedback ต่อไปที่ไหน", "HeartbeatInterval ตั้งไว้เท่าไร" → `search_knowledge` ตอบพร้อมอ้างอิงไฟล์ · หน้า/ชีต/แถว (ค้นด้วยคำ ไม่ใช้โมเดล ~50 ms) · อัปเดตดัชนี: "รัน action reindex ของโปรเจกต์ B781001" · ดัชนีอยู่ `data\knowledge\` ไฟล์ต้นฉบับอ่านอย่างเดียว |
+| **Outlook อ่าน + ร่างเมล** | WebUI + Telegram | "วันนี้มีประชุมอะไร", "หาเมลเรื่อง...", "ร่างเมลถึง ... ว่า ..." → บันทึกใน Drafts เท่านั้น ส่งเองใน Outlook · **ต้องแก้โปรไฟล์ Outlook ก่อน** (ดูด้านล่าง) |
+| **สรุปเช้า 07:00** | Telegram | ทุกวัน ไม่ใช้โมเดล: วันที่ · นัดวันนี้ · เมลยังไม่อ่าน · เตือนวันนี้ · สถานะระบบ · automation ชื่อ `qwen-morning-brief` · ดูตัวอย่าง: `webui-venv\Scripts\python.exe local-tools\morning_brief.py` |
+| **ภาพหน้าจอ** | WebUI + Telegram | "ส่งภาพหน้าจอมาดู", "จับเฉพาะจอ 2", "ขอครึ่งซ้ายของจอ" → PNG ใน outputs ของโปรเจกต์ บน Telegram ส่งกลับในแชท (ภาพอาจมีข้อมูลงาน และขึ้นคลาวด์ของ Telegram) |
+| **สร้างรูปด้วย Runway** | WebUI · Telegram (ต้องมี API key) | WebUI: Admin Panel › Settings › External Tools › Runway ทั้ง 2 รายการ › Auth "OAuth 2.1" › Register Client › Save แล้วเปิดเครื่องมือ Runway ในแชทและล็อกอิน · Telegram: สร้าง key ที่ dev.runwayml.com (เครดิตแยกจากแพ็กเกจแอป) บันทึกเองที่ `data\credentials\runway-api-key.txt` ห้ามส่ง key ในแชท → "สร้างรูป ... แนวนอน" |
+| **ถอดเสียงแม่นขึ้น (Whisper small)** | เสียง Telegram · Ctrl+Alt+D · WebUI | `model-cache\faster-whisper-small` (486 MB) ผิดน้อยกว่า base (ทดสอบเสียงไทย 25% vs 38%) ช้ากว่า ~3 เท่า · คลิปยาวหรือเครื่องไม่ว่างใช้ base อัตโนมัติ (`QWEN_WHISPER_BUDGET_SECONDS`, `QWEN_WHISPER_MODEL=small|base`) |
+| **tunnel สำหรับ LINE** | อินเทอร์เน็ต | ตัวเฝ้าแก้แล้ว (เดิมค้าง 27 ชม. และไม่เริ่มถ้าเปิดเครื่องตอนไม่มีเน็ต) · URL เปลี่ยนทุกครั้งที่รีสตาร์ต → แจ้ง Telegram อัตโนมัติ · ขั้นตอนตั้ง LINE อยู่ใน `internet-gateway\README.md` |
+| **git ของชุดนี้** | เครื่องนี้เท่านั้น | `E:\localllm\.git` (ไม่มี remote) · ดู `GIT-README.txt`: `git status`, `git diff`, `git log`, คืนไฟล์ `git restore <ไฟล์>` |
+
+ต้องทำเอง:
+- **Outlook**: โปรไฟล์เริ่มต้นชี้ไป .pst ใน OneDrive จุฬาฯ ที่หายไป → Control Panel › Mail › Show Profiles › เลือก "Always use" โปรไฟล์ที่ใช้ได้ (หรือเอา .pst ที่หายออก) แล้วล็อกอินให้ซิงก์และเปิด Outlook ค้างไว้ · ระหว่างนี้เครื่องมือไม่เปิด Outlook เอง (กันค้าง) และสรุปเช้าจะบอกว่าอ่าน Outlook ไม่ได้
+- **Runway**: ลงทะเบียน OAuth 2.1 ใหม่ตามแถวด้านบน (เดิมใช้ไม่ได้ตั้งแต่ 19 ก.ย. เพราะสคริปต์ตั้งชนิดล็อกอินผิด แก้สคริปต์แล้ว)
+- **LINE**: สร้าง channel และใส่ Channel secret / access token เองด้วย `internet-gateway\configure-line.ps1` (คลิกขวา › Run with PowerShell)

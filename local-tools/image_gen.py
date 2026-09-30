@@ -6,12 +6,15 @@ inside Open WebUI; this module never reads them. Instead it uses a Runway *devel
 that the owner creates himself at https://dev.runwayml.com (API credits are bought there and are
 separate from the Runway app plan's credits).
 
-The key is read at call time from the RUNWAYML_API_SECRET environment variable: the process
-environment first, then the owner's saved user variable (HKCU\\Environment), so
-`setx RUNWAYML_API_SECRET <key>` typed by the owner in his own PowerShell works without a
-restart. The key only ever goes into the Authorization header of requests to API_BASE; it is
-never logged, returned, written to disk or sent to the image CDN, and any echo of it in an error
-text is redacted. Without a key the tool answers status=not_configured and changes nothing.
+The key is read at call time (no restart needed) from KEY_FILE,
+<install root>\\data\\credentials\\runway-api-key.txt, which the owner writes himself (see
+_not_configured). A folder named "credentials" is refused by the model's file tools
+(server.py BLOCKED_PARTS), and unlike a user environment variable (setx) the key is not
+inherited by every command the chat runs, where `set` would print it. RUNWAYML_API_SECRET in
+local-tools' own process environment is honoured as a fallback, but not recommended.
+The key only ever goes into the Authorization header of requests to API_BASE; it is never
+logged, returned, written anywhere or sent to the image CDN, and any echo of it in an error text
+is redacted. Without a key the tool answers status=not_configured and changes nothing.
 
 Every generation spends Runway API credits (gen4_image: 5 credits at 720p, 8 at 1080p) and sends
 the prompt (and the reference image, if any) to Runway's cloud. A task that is still running at
@@ -35,6 +38,7 @@ API_BASE = "https://api.dev.runwayml.com"
 API_VERSION = "2024-11-06"
 MODEL = "gen4_image"
 ENV_NAME = "RUNWAYML_API_SECRET"
+KEY_FILE = Path(__file__).resolve().parent.parent / "data" / "credentials" / "runway-api-key.txt"
 CREDITS = {"720p": 5, "1080p": 8}
 RATIOS = {
     "16:9": {"720p": "1280:720", "1080p": "1920:1080"},
@@ -55,23 +59,17 @@ REFERENCE_TAG = "ref"
 _TERMINAL_FAIL = {"FAILED", "CANCELLED"}
 
 
-class _NotConfigured(Exception):
-    pass
-
-
 def _api_key() -> tuple[str, str]:
+    try:
+        if KEY_FILE.is_file() and KEY_FILE.stat().st_size <= 4096:
+            for line in KEY_FILE.read_text(encoding="utf-8-sig", errors="ignore").splitlines():
+                if line.strip() and not line.lstrip().startswith("#"):
+                    return line.strip(), "key file"
+    except OSError:
+        pass
     key = os.environ.get(ENV_NAME, "").strip()
     if key:
         return key, "process environment"
-    try:
-        import winreg
-
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as handle:
-            value, _kind = winreg.QueryValueEx(handle, ENV_NAME)
-        if str(value).strip():
-            return str(value).strip(), "user environment (setx)"
-    except OSError:
-        pass
     return "", ""
 
 
@@ -79,9 +77,9 @@ def _not_configured() -> dict[str, Any]:
     return {
         "status": "not_configured",
         "message": ("ยังไม่ได้ตั้ง Runway API key จึงสร้างรูปไม่ได้ (ไม่มีการใช้เครดิต). เจ้าของเครื่องสร้าง key เองที่ "
-                    "https://dev.runwayml.com (เครดิต API ซื้อแยกจากแพ็กเกจแอป Runway) แล้วพิมพ์ใน PowerShell ของตัวเอง: "
-                    "setx RUNWAYML_API_SECRET <key> — ห้ามส่ง key ในแชทหรือ Telegram. "
-                    "ในหน้าแชท Open WebUI ใช้เครื่องมือ Runway (MCP) ที่ล็อกอินไว้แทนได้"),
+                    "https://dev.runwayml.com (เครดิต API ซื้อแยกจากแพ็กเกจแอป Runway) แล้วบันทึกลงไฟล์ "
+                    f"{KEY_FILE} เองที่เครื่อง — ห้ามส่ง key ในแชทหรือ Telegram และห้ามให้โมเดลเขียนไฟล์นี้. "
+                    "ในหน้าแชท Open WebUI ใช้เครื่องมือ Runway (MCP) หลังล็อกอินแทนได้"),
     }
 
 
@@ -118,7 +116,7 @@ def _raise_for(response, key: str, what: str) -> None:
         return
     detail = _error_text(response, key)
     if code == 401:
-        raise RuntimeError(f"Runway ปฏิเสธ API key (401) ตอน{what}: key ผิดหรือถูกยกเลิก — ตั้ง {ENV_NAME} ใหม่")
+        raise RuntimeError(f"Runway ปฏิเสธ API key (401) ตอน{what}: key ผิดหรือถูกยกเลิก — เจ้าของเครื่องเปลี่ยน key ในไฟล์ {KEY_FILE}")
     if code == 429:
         raise RuntimeError(f"Runway จำกัดจำนวนคำขอ (429) ตอน{what}: ลองใหม่อีกสักครู่. {detail}")
     if "credit" in detail.lower():

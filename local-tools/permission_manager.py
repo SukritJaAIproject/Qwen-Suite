@@ -152,6 +152,17 @@ ACTION_CATEGORIES: dict[str, str] = {
     "init_agents_md": "project_write",
     # Read-only list of the desktop-launched Qwen Codex jobs (logs\codex-bridge\jobs.jsonl).
     "list_codex_jobs": "project_read",
+    # Batch 3 (2026-09-30). Codex jobs from chat run with the owner's rights under the command policy
+    # (hook inside Codex); Outlook drafts are never sent; screenshots return only to the asking chat.
+    "start_codex_job": "system_execute",
+    "get_codex_job": "project_read",
+    "search_knowledge": "project_read",
+    "list_knowledge": "project_read",
+    "outlook_agenda": "computer_read",
+    "outlook_search_mail": "computer_read",
+    "outlook_create_draft": "computer_write",
+    "capture_screen": "system_execute",
+    "generate_image": "project_write",
     # Deep research job (background task) and its status (read).
     "start_research": "task_control",
     "get_research": "project_read",

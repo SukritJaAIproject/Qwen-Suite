@@ -436,7 +436,7 @@ def configure(db_path: Path) -> dict[str, object]:
                 "url": "https://mcp.runwayml.com/mcp",
                 "path": "",
                 "type": "mcp",
-                "auth_type": "oauth",
+                "auth_type": "oauth_2.1",
                 "headers": {},
                 "key": "",
                 "config": {"enable": True, "access_grants": [], "function_name_filter_list": ""},
@@ -450,7 +450,7 @@ def configure(db_path: Path) -> dict[str, object]:
                 "url": "https://mcp.runwayml.com/mcp",
                 "path": "",
                 "type": "mcp",
-                "auth_type": "oauth",
+                "auth_type": "oauth_2.1",
                 "headers": {},
                 "key": "",
                 "config": {"enable": True, "access_grants": [], "function_name_filter_list": ""},
@@ -461,6 +461,18 @@ def configure(db_path: Path) -> dict[str, object]:
                 },
             },
         ]
+        # Open WebUI 0.11 sends a token only for "oauth_2.1"/"oauth_2.1_static" ("oauth" silently sent
+        # none, so Runway failed from 2026-09-19). The owner registers the client once in Admin >
+        # External Tools; keep that registration when this script runs again.
+        row = connection.execute("SELECT value FROM config WHERE key='tool_server.connections'").fetchone()
+        try:
+            previous = {(c.get("info") or {}).get("id"): c for c in json.loads(row[0] or "[]")} if row else {}
+        except (TypeError, ValueError, AttributeError):
+            previous = {}
+        for item in tool_connections:
+            old_info = (previous.get(item["info"]["id"]) or {}).get("info") or {}
+            if item["auth_type"] == "oauth_2.1" and old_info.get("oauth_client_info"):
+                item["info"]["oauth_client_info"] = old_info["oauth_client_info"]
         settings = {
             "ollama.enable": True,
             "ollama.base_urls": ["http://127.0.0.1:8770", "http://127.0.0.1:11434"],
@@ -515,11 +527,13 @@ def configure(db_path: Path) -> dict[str, object]:
             "google_drive.enable": False,
             "onedrive.enable": False,
         }
-        # Voice input uses the faster-whisper model the installer put in model-cache
-        # (a bare "base" makes Open WebUI try to download it on first use).
-        whisper_dir = db_path.resolve().parent.parent / "model-cache" / "faster-whisper-base"
-        if (whisper_dir / "model.bin").exists():
-            settings["audio.stt.whisper_model"] = str(whisper_dir)
+        # Voice input uses a faster-whisper model from model-cache (a bare "base" makes Open WebUI try
+        # to download it on first use); small is clearly better for Thai when it has been downloaded.
+        for whisper_name in ("faster-whisper-small", "faster-whisper-base"):
+            whisper_dir = db_path.resolve().parent.parent / "model-cache" / whisper_name
+            if (whisper_dir / "model.bin").exists():
+                settings["audio.stt.whisper_model"] = str(whisper_dir)
+                break
         for key, value in settings.items():
             set_config(connection, key, value, now)
 

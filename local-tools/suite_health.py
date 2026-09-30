@@ -987,6 +987,20 @@ def check_oauth(ctx: dict) -> dict:
         con.execute("PRAGMA query_only = 1")
         # provider and expiry only - the token column is never selected
         rows = con.execute("SELECT provider, expires_at FROM oauth_session").fetchall()
+        # Sessions of an MCP tool server that is no longer configured can never be used again
+        # (the Runway ids changed on 2026-09-19); their expiry must not raise an alarm.
+        configured = None
+        row = con.execute("SELECT value FROM config WHERE key='tool_server.connections'").fetchone()
+        if row and isinstance(row[0], str):
+            try:
+                configured = {"mcp:" + str((c.get("info") or {}).get("id") or "") for c in json.loads(row[0])}
+            except (ValueError, AttributeError, TypeError):
+                configured = None
+        orphaned = 0
+        if configured is not None:
+            kept = [r for r in rows if not str(r[0] or "").startswith("mcp:") or str(r[0]) in configured]
+            orphaned = len(rows) - len(kept)
+            rows = kept
     except sqlite3.Error as exc:
         msg = str(exc)
         if "no such table" in msg:
@@ -1023,7 +1037,11 @@ def check_oauth(ctx: dict) -> dict:
         elif days < OAUTH_WARN_DAYS:
             worst = WARN if worst != BAD else worst
             bits.append(f"{fam['provider']} จะหมดอายุ {fam['earliest_expiry'][:10]} (อีก {int(days)} วัน) — ล็อกอินใหม่ก่อนวันนั้น")
-    if not providers:
+    if orphaned:
+        # e.g. Runway after the 2026-09-19 id change: its tools cannot work until re-registered
+        worst = WARN if worst != BAD else worst
+        bits.append(f"การล็อกอินเครื่องมือ MCP เดิม {orphaned} รายการใช้ไม่ได้แล้ว — ลงทะเบียนใหม่ที่ Admin › Settings › External Tools (OAuth 2.1 › Register Client) แล้วล็อกอินในแชท")
+    if not providers and not bits:
         return _result(OK, "ไม่มีการล็อกอิน OAuth ใน Open WebUI", providers=[])
     if bits:
         return _result(worst, " · ".join(bits), providers=providers)

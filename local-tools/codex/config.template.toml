@@ -1,6 +1,8 @@
 # Codex-Qwen bridge - config for the bridge's own CODEX_HOME ({{ROOT}}\data\codex-home).
-# Invoke-QwenCodex.ps1 writes config.toml from this template before every run ({{ROOT}} is
-# replaced), so edit this file, not the generated one. C:\Users\EGAT\.codex is never used.
+# Invoke-QwenCodex.ps1 writes config.toml from this template before every run ({{ROOT}} and
+# the {{POLICY_HOOK_*}} values are filled in, and each job folder gets a [projects.'<folder>']
+# trust_level = "untrusted" entry appended), so edit this file, not the generated one.
+# C:\Users\EGAT\.codex is never used.
 #
 # Verified against codex-cli 0.146 (2026-09-30), offline:
 #  - Every top-level key must stay ABOVE the first [table]. A key written after a table
@@ -76,8 +78,11 @@ secret_auth_storage = false
 in_app_updates = false
 enable_request_compression = false
 workspace_dependencies = false
-# Repo-provided hooks would run commands before the model does anything; a job never needs them.
-hooks = false
+# On for ONE hook only: the bridge's policy hook below. Hooks from a repo (.codex\config.toml or
+# .codex\hooks.json) never run: the bridge marks every job folder trust_level = "untrusted" (so
+# no project-local config, hooks or rules load at all) and a hook runs only with a trusted_hash.
+# The bridge also passes --enable hooks, so no config layer can switch this off.
+hooks = true
 memories = false
 
 [skills]
@@ -103,3 +108,20 @@ inherit = "core"
 # Best effort network-off for the commands the model runs when no sandbox enforces it:
 # proxy-aware tools (pip, git, curl, python requests) hit a dead port instead of the internet.
 set = { HTTP_PROXY = "http://127.0.0.1:9", HTTPS_PROXY = "http://127.0.0.1:9", ALL_PROXY = "http://127.0.0.1:9", NO_PROXY = "127.0.0.1,localhost", PYTHONUTF8 = "1" }
+
+# Policy hook (added 2026-09-30): before EVERY tool call Codex runs policy_hook.py, which checks
+# the command with the gateway's command_policy (the same hard blocks as run_command from chat)
+# and answers a JSON "deny" with a Thai reason the model sees. Verified on 0.146 with a mock
+# model. Codex fails OPEN when a hook errors, times out or is untrusted (it is then skipped
+# silently), so the bridge runs `policy_hook.py --selftest` and checks trust with
+# `codex app-server` hooks/list before every job and refuses write jobs when either fails.
+# The command runs through cmd.exe: the bridge only renders paths without spaces or quotes.
+# This must stay the FIRST PreToolUse group: its trust key ends in ":pre_tool_use:0:0".
+[[hooks.PreToolUse]]
+matcher = "*"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = '{{POLICY_HOOK_COMMAND}}'
+timeout = 30
+# {{POLICY_HOOK_TRUST}} (the bridge puts [hooks.state.'<key>'] trusted_hash = "..." here)

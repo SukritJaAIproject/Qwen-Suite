@@ -1,19 +1,26 @@
-"""Codex-Qwen bridge helpers: job list, event summaries, output-schema check, notification.
+"""Codex-Qwen bridge helpers: job list, event summaries, output-schema check, notification,
+policy-hook trust check (hooks/list) and the changed-files snapshot of write jobs.
 
-Invoke-QwenCodex.ps1 calls the CLI at the bottom; the gateway's read-only list_codex_jobs
-action imports list_jobs(). Nothing here starts Codex or talks to a model.
+Invoke-QwenCodex.ps1 calls the CLI at the bottom; the gateway's list_codex_jobs and
+get_codex_job (codex_dispatch.py) import list_jobs(). Nothing here starts a Codex job or talks
+to a model (hook_list starts `codex app-server` only to ask which hooks Codex sees).
 
 Layout (ROOT = the suite folder, two levels above this file):
   ROOT\\logs\\codex-bridge\\jobs.jsonl     one line per job event (queued/started/finished)
   <run dir>\\result.json                   the summary Invoke-QwenCodex.ps1 writes at the end
+  <run dir>\\policy-denials.jsonl          commands policy_hook.py blocked during the job
 """
 from __future__ import annotations
 
 import importlib.util
 import inspect
 import json
+import os
 import re
+import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -217,9 +224,17 @@ def validate_output(schema_path: str | Path, text: str) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- notify
-def notify(tools_dir: str | Path, title: str, status: str, minutes: float, dry_run: bool = False) -> dict[str, Any]:
+CHAT_SOURCES = {"openclaw", "webui", "mcp", "web"}
+
+
+def notify(tools_dir: str | Path, title: str, status: str, minutes: float, dry_run: bool = False,
+           source: str = "", job_id: str = "") -> dict[str, Any]:
     """Hand the result to local-tools\\notifier.py when it is installed. Only the title and
-    status leave the machine - never prompts, file contents or paths."""
+    status leave the machine - never prompts, file contents or paths.
+
+    A job started from chat (source openclaw/webui/mcp, set by codex_dispatch.py) goes where
+    notifier.resolve_channels sends every chat-started task: Telegram + toast for OpenClaw,
+    toast only for Open WebUI. A desktop job (no source) keeps the notifier's default channels."""
     path = Path(tools_dir) / "notifier.py"
     if not path.exists():
         return {"sent": False, "reason": "notifier.py is not installed"}
@@ -241,10 +256,194 @@ def notify(tools_dir: str | Path, title: str, status: str, minutes: float, dry_r
         kwargs["media_path"] = ""
     if "dry_run" in params:
         kwargs["dry_run"] = bool(dry_run)
+    channels: list[str] | None = None
+    normalized = str(source or "").strip().casefold()
+    if normalized in CHAT_SOURCES and "channels" in params and callable(getattr(module, "resolve_channels", None)):
+        channels = list(module.resolve_channels(None, normalized))
+        kwargs["channels"] = channels
+    clean_id = re.sub(r"[^0-9A-Za-z._-]", "", str(job_id or ""))[:80]
+    if clean_id and "task_id" in params:
+        # a failed job's message ends with "ดูรายละเอียดด้วย get_codex_job <id>"
+        kwargs["task_id"] = clean_id
+        if "lookup" in params:
+            kwargs["lookup"] = "get_codex_job"
     result = func(**kwargs)
     # Only the shape goes back to the log: the notifier's own result may name the recipient.
     shape = sorted(result) if isinstance(result, dict) else type(result).__name__
-    return {"sent": True, "dry_run": bool(dry_run), "result_keys": shape}
+    out: dict[str, Any] = {"sent": True, "dry_run": bool(dry_run), "result_keys": shape}
+    if channels is not None:
+        out["channels"] = channels
+    if isinstance(result, dict) and result.get("status"):
+        out["status"] = str(result.get("status"))
+    return out
+
+
+# ------------------------------------------------------------------- policy hook trust
+_HOOK_FIELDS = ("key", "eventName", "handlerType", "matcher", "command", "timeoutSec", "sourcePath", "source",
+                "enabled", "isManaged", "currentHash", "trustStatus")
+
+
+def _codex_env(codex_home: str | Path) -> dict[str, str]:
+    """The environment Invoke-WithCodexEnv gives codex.exe: its own CODEX_HOME, a dead proxy
+    for everything but 127.0.0.1, and no OpenAI keys."""
+    env = dict(os.environ)
+    env["CODEX_HOME"] = str(codex_home)
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        env[name] = "http://127.0.0.1:9"
+    env["NO_PROXY"] = "127.0.0.1,localhost"
+    for name in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_API_KEY"):
+        env.pop(name, None)
+    return env
+
+
+def hook_list(codex_exe: str | Path, codex_home: str | Path, cwd: str | Path, timeout: float = 25.0) -> dict[str, Any]:
+    """Which hooks Codex sees for `cwd`, with their trust status and current hash.
+
+    Asks `codex app-server` (JSON-RPC over stdio: initialize, hooks/list) - Codex computes the
+    hash itself, so the bridge never has to know the algorithm, and a Codex update that changes
+    it shows up as "untrusted" here instead of a hook that silently stops running. No model is
+    contacted; the process is killed right after the answer (~0.4 s)."""
+    try:
+        proc = subprocess.Popen(
+            [str(codex_exe), "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, cwd=str(cwd), env=_codex_env(codex_home),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except OSError as exc:
+        return {"ok": False, "error": f"เปิด codex app-server ไม่ได้: {type(exc).__name__}: {exc}"}
+    responses: dict[int, dict[str, Any]] = {}
+
+    def reader() -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            try:
+                message = json.loads(line.decode("utf-8", errors="replace"))
+            except ValueError:
+                continue
+            if isinstance(message, dict) and isinstance(message.get("id"), int):
+                responses[message["id"]] = message
+
+    threading.Thread(target=reader, daemon=True).start()
+
+    def send(obj: dict[str, Any]) -> None:
+        assert proc.stdin is not None
+        proc.stdin.write((json.dumps(obj) + "\n").encode("utf-8"))
+        proc.stdin.flush()
+
+    def call(request_id: int, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        send({"id": request_id, "method": method, "params": params})
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if request_id in responses:
+                return responses[request_id]
+            if proc.poll() is not None:
+                break
+            time.sleep(0.05)
+        raise TimeoutError(f"codex app-server ไม่ตอบ {method} ภายใน {timeout:.0f} วินาที")
+
+    try:
+        init = call(1, "initialize", {"clientInfo": {"name": "qwen-codex-bridge", "version": "1"}})
+        if "error" in init:
+            return {"ok": False, "error": "initialize: " + json.dumps(init["error"], ensure_ascii=False)[:300]}
+        send({"method": "initialized"})
+        answer = call(2, "hooks/list", {"cwds": [str(cwd)]})
+        if "error" in answer:
+            return {"ok": False, "error": "hooks/list: " + json.dumps(answer["error"], ensure_ascii=False)[:300]}
+        hooks: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        errors: list[str] = []
+        for entry in (answer.get("result") or {}).get("data") or []:
+            if not isinstance(entry, dict):
+                continue
+            hooks.extend({k: h.get(k) for k in _HOOK_FIELDS} for h in entry.get("hooks") or [] if isinstance(h, dict))
+            warnings.extend(str(w)[:300] for w in entry.get("warnings") or [])
+            errors.extend(str(e)[:300] for e in entry.get("errors") or [])
+        return {"ok": True, "hooks": hooks, "warnings": warnings, "errors": errors}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    finally:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+
+
+# --------------------------------------------------------------- changed-files snapshot
+# Write jobs change files with shell commands (Set-Content, python ...): Codex 0.146 has no
+# apply_patch here, so its event stream has no file_change items. The bridge compares a
+# size+mtime listing of the job folders from before and after the run instead.
+SNAPSHOT_SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", ".codex-runs", "__pycache__", ".venv", "venv",
+                      ".mypy_cache", ".pytest_cache", ".tox", ".idea", ".vs"}
+SNAPSHOT_MAX_FILES = 20_000
+CHANGES_MAX_LISTED = 200
+
+
+def _walk(root: Path, limit: int) -> tuple[dict[str, list[int]], bool]:
+    files: dict[str, list[int]] = {}
+    stack = [root]
+    while stack:
+        folder = stack.pop()
+        try:
+            entries = list(os.scandir(folder))
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if entry.is_symlink():
+                    continue  # junctions/symlinks: never followed out of the job folder
+                if entry.is_dir(follow_symlinks=False):
+                    if entry.name.casefold() not in SNAPSHOT_SKIP_DIRS:
+                        stack.append(Path(entry.path))
+                    continue
+                stat = entry.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            files[os.path.relpath(entry.path, root)] = [int(stat.st_size), int(stat.st_mtime_ns)]
+            if len(files) >= limit:
+                return files, True
+    return files, False
+
+
+def snapshot(out_file: str | Path, roots: list[str]) -> dict[str, Any]:
+    data: dict[str, Any] = {"taken_at": time.time(), "roots": {}, "truncated": False}
+    for root in dict.fromkeys(str(r) for r in roots if str(r).strip()):
+        files, truncated = _walk(Path(root), SNAPSHOT_MAX_FILES)
+        data["roots"][root] = files
+        data["truncated"] = data["truncated"] or truncated
+    Path(out_file).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return {"ok": True, "roots": len(data["roots"]), "files": sum(len(v) for v in data["roots"].values()),
+            "truncated": data["truncated"]}
+
+
+def changes(snapshot_file: str | Path) -> dict[str, Any]:
+    """Files added, modified or deleted under the snapshot's roots since it was taken."""
+    data = json.loads(Path(snapshot_file).read_text(encoding="utf-8-sig"))
+    listed: list[dict[str, str]] = []
+    counts = {"added": 0, "modified": 0, "deleted": 0}
+    truncated = bool(data.get("truncated"))
+    for root, before in (data.get("roots") or {}).items():
+        after, cut = _walk(Path(root), SNAPSHOT_MAX_FILES)
+        truncated = truncated or cut
+        for rel in sorted(set(before) | set(after)):
+            if rel not in before:
+                kind = "added"
+            elif rel not in after:
+                kind = "deleted"
+                if cut:
+                    continue  # a truncated walk cannot tell "deleted" from "not reached"
+            elif list(before[rel]) != list(after[rel]):
+                kind = "modified"
+            else:
+                continue
+            counts[kind] += 1
+            if len(listed) < CHANGES_MAX_LISTED:
+                listed.append({"path": str(Path(root) / rel), "kind": kind})
+    return {"ok": True, "counts": counts, "total": sum(counts.values()), "files": listed,
+            "listed": len(listed), "truncated_walk": truncated}
 
 
 # ----------------------------------------------------------------------------- docx
@@ -272,6 +471,15 @@ def _pid_alive(pid: Any) -> bool:
         return "powershell" in (proc.name() or "").lower() or "pwsh" in (proc.name() or "").lower()
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         return False
+
+
+def blocked_commands(run_dir: Any, limit: int = 10) -> list[dict[str, Any]]:
+    """The last commands policy_hook.py refused in one job (masked, clipped)."""
+    if not run_dir:
+        return []
+    rows = _read_jsonl(Path(str(run_dir)) / "policy-denials.jsonl")
+    return [{"ts": r.get("ts"), "command": _clip(redact_secrets(r.get("command")), 200), "reason": str(r.get("reason") or "")[:200]}
+            for r in rows[-limit:]]
 
 
 def list_jobs(root: str | Path | None = None, job_id: str = "", limit: int = 10) -> dict[str, Any]:
@@ -323,9 +531,19 @@ def list_jobs(root: str | Path | None = None, job_id: str = "", limit: int = 10)
                 "errors": [redact_secrets(e) for e in summary.get("errors") or []],
                 "plan": [{**p, "text": redact_secrets(p.get("text"))} for p in summary.get("plan") or [] if isinstance(p, dict)],
             }
-            for key in ("schema_check", "review_file", "review_docx", "exit_code", "error"):
+            for key in ("schema_check", "review_file", "review_docx", "exit_code", "error", "policy_hook"):
                 if key in result:
                     job[key] = result[key]
+            changed = result.get("changed_files") if isinstance(result.get("changed_files"), dict) else None
+            if changed:
+                job["changed_files"] = {
+                    **{k: changed.get(k) for k in ("counts", "total", "listed", "truncated_walk") if k in changed},
+                    "files": [{**f, "path": "<ซ่อน: โฟลเดอร์ข้อมูลลับ>" if _mentions_secret_path(f.get("path")) else f.get("path")}
+                              for f in changed.get("files") or [] if isinstance(f, dict)][:50],
+                }
+        denials = blocked_commands(job.get("run_dir"))
+        if denials:
+            job["blocked_commands"] = denials
             if isinstance(job.get("schema_check"), dict) and job["schema_check"].get("error"):
                 # jsonschema quotes the offending value, which is model output
                 job["schema_check"] = {**job["schema_check"], "error": _safe_answer(job["schema_check"]["error"], 600, hidden)}
@@ -338,8 +556,9 @@ def list_jobs(root: str | Path | None = None, job_id: str = "", limit: int = 10)
     selected = [jobs[j] for j in reversed(order)][: max(1, min(int(limit or 10), 50))]
     out = []
     for job in selected:
-        item = {k: job.get(k) for k in ("id", "kind", "status", "title", "mode", "model", "cwd", "queued_at",
-                                        "started_at", "finished_at", "minutes", "exit_code", "run_dir", "error")}
+        item = {k: job.get(k) for k in ("id", "kind", "status", "title", "mode", "model", "cwd", "source", "queued_at",
+                                        "started_at", "finished_at", "minutes", "exit_code", "run_dir", "error",
+                                        "files_changed_count")}
         hidden = bool(job.get("touched_sensitive_paths")) or _mentions_secret_path(job.get("final_message"))
         item["final_message"] = _safe_answer(job.get("final_message"), FINAL_CHARS_LIST, hidden)
         if item.get("error"):
@@ -362,7 +581,7 @@ def _main(argv: list[str]) -> int:
         out_file = argv[at + 1] if at + 1 < len(argv) else ""
         argv = argv[:at] + argv[at + 2:]
     if not argv:
-        print("usage: codex_jobs.py summarize|validate|notify|docx|list ... [--out FILE]", file=sys.stderr)
+        print("usage: codex_jobs.py summarize|validate|notify|docx|list|hooks|snapshot|changes ... [--out FILE]", file=sys.stderr)
         return 2
     cmd, args = argv[0], argv[1:]
 
@@ -381,7 +600,16 @@ def _main(argv: list[str]) -> int:
         elif cmd == "notify":
             spec = json.loads(Path(args[0]).read_text(encoding="utf-8-sig"))
             out = notify(spec["tools_dir"], spec["title"], spec["status"], float(spec.get("minutes") or 0),
-                         bool(spec.get("dry_run")))
+                         bool(spec.get("dry_run")), str(spec.get("source") or ""), str(spec.get("job_id") or ""))
+        elif cmd == "hooks":
+            # hooks CODEX_EXE CODEX_HOME CWD
+            out = hook_list(args[0], args[1], args[2])
+        elif cmd == "snapshot":
+            # snapshot OUT_FILE ROOT [ROOT ...]  (roots may also come ;-joined in one argument)
+            roots = [r for a in args[1:] for r in a.split(";") if r.strip()]
+            out = snapshot(args[0], roots)
+        elif cmd == "changes":
+            out = changes(args[0])
         elif cmd == "docx":
             out = make_docx(args[0], args[1], args[2], args[3] if len(args) > 3 else "")
         elif cmd == "list":
