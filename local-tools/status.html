@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Qwen Suite Status</title>
+  <style>
+    :root{color-scheme:dark;--bg:#070a10;--panel:#101522;--panel2:#151b2a;--text:#eef2ff;--muted:#98a2ba;--line:#273149;--accent:#8b5cf6;--good:#34d399;--warn:#fbbf24;--bad:#fb7185;--unk:#94a3b8}
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at 82% 0,#21164a 0,transparent 34%),var(--bg);color:var(--text);font:14px/1.5 Inter,"Noto Sans Thai","Segoe UI",sans-serif}
+    .wrap{max-width:1100px;margin:auto;padding:28px}
+    .head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:18px;flex-wrap:wrap}
+    .title{font-size:24px;font-weight:700}.subtitle{color:var(--muted)}
+    .tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.wide{grid-column:1/-1}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;min-width:0}
+    .card.warn{border-color:#5c4a14}.card.bad{border-color:#5c1a28}
+    h2{margin:0 0 6px;font-size:16px;display:flex;gap:10px;align-items:center;justify-content:space-between}
+    .note{color:var(--muted);font-size:13px}
+    .summary{margin:4px 0 10px;word-break:break-word}
+    button{background:var(--accent);color:#fff;border:0;border-radius:10px;padding:9px 16px;font-weight:600;cursor:pointer}
+    button.ghost{background:transparent;border:1px solid var(--line);color:var(--text)}button:disabled{opacity:.5;cursor:default}
+    label{color:var(--muted);font-size:13px;display:flex;gap:6px;align-items:center}
+    .badge{display:inline-block;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:600;white-space:nowrap}
+    .ok{background:#0d3b2e;color:var(--good)}.warn-b{background:#3b2f0d;color:var(--warn)}.bad-b{background:#3b0d18;color:var(--bad)}.unk{background:#1e2533;color:var(--unk)}
+    .overall{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+    .overall .big{font-size:18px;font-weight:700;padding:4px 14px}
+    ul.problems{margin:10px 0 0;padding-left:20px}ul.problems li{margin:4px 0}
+    table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-weight:500}
+    .kv{display:grid;grid-template-columns:170px 1fr;gap:4px 12px;font-size:13px}.kv div:nth-child(odd){color:var(--muted)}
+    .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}.dot.on{background:var(--good)}.dot.off{background:var(--bad)}
+    .msg{margin-top:10px;padding:10px 12px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);display:none}
+    .muted{color:var(--muted)}.small{font-size:12px}
+    @media(max-width:800px){.wrap{padding:16px}.grid{grid-template-columns:1fr}.kv{grid-template-columns:1fr}}
+  </style>
+</head>
+<body><main class="wrap">
+  <header class="head">
+    <div><div class="title">Qwen Suite Status</div><div class="subtitle">ตรวจสุขภาพทั้งชุดแบบอ่านอย่างเดียว: บริการ, Ollama, GPU (ทาง B), ดิสก์, Telegram/WhatsApp, งานตั้งเวลา, OAuth, ตัวติดตั้ง</div></div>
+    <div class="tools">
+      <label><input type="checkbox" id="auto" checked> อัปเดตส่วนเบาทุก 15 วินาที</label>
+      <button id="fullBtn" onclick="load(true)">ตรวจใหม่ทั้งหมด</button>
+    </div>
+  </header>
+  <section class="grid">
+    <article class="card wide">
+      <div class="overall"><span id="overall" class="badge unk big">กำลังตรวจ...</span><span id="meta" class="note"></span></div>
+      <ul id="problems" class="problems"></ul>
+      <div id="msg" class="msg"></div>
+    </article>
+  </section>
+  <section id="checks" class="grid" style="margin-top:16px"></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const CLS={ok:'ok',warn:'warn-b',bad:'bad-b',unknown:'unk'};
+const badge=(s,t)=>`<span class="badge ${CLS[s]||'unk'}">${esc(t)}</span>`;
+const WIDE=new Set(['ollama','channels','automations','payload']);
+const PHASE={idle:'ว่าง',reading:'กำลังอ่าน prompt',generating:'กำลังสร้างคำตอบ',loading:'กำลังโหลดโมเดล',unknown:'ไม่ทราบ'};
+let report=null,busy=false;
+function yes(v){return v===true?'ใช่':v===false?'ไม่':esc(v??'-')}
+function dur(s){if(s==null)return '-';s=Math.round(s);if(s<60)return s+' วินาที';const m=Math.floor(s/60);if(m<60)return m+' นาที'+(s%60&&m<10?' '+(s%60)+' วินาที':'');return Math.floor(m/60)+' ชม. '+(m%60)+' นาที'}
+function table(head,rows){return rows.length?`<table><thead><tr>${head.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`:'<div class="note">ไม่มีข้อมูล</div>'}
+function kv(pairs){return `<div class="kv">${pairs.filter(p=>p[1]!==undefined&&p[1]!==null&&p[1]!=='').map(p=>`<div>${esc(p[0])}</div><div>${p[1]}</div>`).join('')}</div>`}
+const RENDER={
+  ports:d=>table(['พอร์ต','บริการ','สถานะ'],(d.ports||[]).map(p=>[p.port,esc(p.name),`<span class="dot ${p.open?'on':'off'}"></span>${p.open?'เปิด':'ปิด'}${p.core?'':' <span class="muted small">(เสริม)</span>'}`])),
+  ollama:d=>{const s=d.state||{},sp=d.speeds||{};let now=PHASE[s.phase]||esc(s.phase);
+    if(s.phase==='reading')now+=` ${(s.processed_tokens||0).toLocaleString()}/${(s.prompt_tokens||0).toLocaleString()} tokens`+(s.progress_pct!=null?` (${s.progress_pct}%)`:'')+(s.eta_s!=null?` · เหลือราว ${dur(s.eta_s)}`:'')+(s.rate_tps?` · ${s.rate_tps} tok/s`:'');
+    if(s.phase==='generating'&&s.generated_tokens!=null)now+=` ได้ ${s.generated_tokens} tokens`;
+    if(s.model)now+=` <span class="muted">(${esc(s.model)})</span>`;
+    return kv([['Ollama',esc(d.version)],['ตอนนี้',now],['ล็อกเขียนล่าสุด',s.log_age_s!=null?dur(s.log_age_s)+'ก่อน':null],
+      ['อ่าน prompt (มัธยฐาน)',sp.median_prompt_tps?sp.median_prompt_tps+' tok/s':null],['ตอบ (มัธยฐาน)',sp.median_gen_tps?sp.median_gen_tps+' tok/s':null],
+      ['งานล่าสุด',sp.last_prompt_tokens!=null?`prompt ${sp.last_prompt_tokens} tokens @ ${sp.last_prompt_tps} tok/s · ตอบ ${sp.last_gen_tokens} tokens @ ${sp.last_gen_tps} tok/s`:null]])
+      +((d.models||[]).length?'<div style="margin-top:10px"></div>'+table(['โมเดลที่โหลด','ขนาด','ใน GPU','context','ปล่อยใน'],d.models.map(m=>[esc(m.name),m.size_gb+' GB',`${m.gpu_mb} MB (${m.gpu_percent}%)`,esc(m.context),m.unload_in_min!=null?m.unload_in_min+' นาที':'-'])):'')},
+  ollama_config:d=>kv([['MAX_LOADED ที่รันอยู่',esc(d.max_loaded_running)],['MAX_LOADED ในรีจิสทรี',esc(d.max_loaded_registry)],['ค่าที่ควรเป็น',esc(d.max_loaded_expected)],
+    ['NUM_PARALLEL',esc(d.num_parallel)],['CONTEXT_LENGTH',esc(d.context_length)],['อุปกรณ์ของ runner',esc((d.runner_devices||[]).join(', ')||'CPU')],['layer บน GPU',esc(d.runner_offload)],
+    ['VRAM ที่ใช้',d.vram_mb!=null?d.vram_mb+' MB':null],['Ollama เริ่มเมื่อ',esc(d.server_started)],['เป้าหมาย',`ทาง ${esc(d.target_path)}`]]),
+  display:d=>table(['การ์ด','สถานะ','Code','ไดรเวอร์'],(d.adapters||[]).map(a=>[esc(a.name)+(a.pci?` <span class="muted small">${esc(a.pci)}</span>`:''),esc(a.present?a.status:'ไม่ได้เสียบ'),esc(a.problem_code),a.driver_branch?esc(a.driver_branch.toFixed(2)):'-'])),
+  disk:d=>table(['ไดรฟ์','ว่าง','ทั้งหมด','ใช้ไป'],(d.drives||[]).map(x=>[esc(x.drive),x.free_gb!=null?x.free_gb+' GB':'-',x.total_gb!=null?x.total_gb+' GB':'-',x.used_percent!=null?x.used_percent+'%':'-'])),
+  channels:d=>table(['ช่องทาง','เชื่อมต่อ','สถานะ','ต่อได้ล่าสุด','หลุดถาวรวันนี้','error วันนี้'],(d.channels||[]).map(c=>[esc(c.label),c.connected===undefined?'-':`<span class="dot ${c.connected?'on':'off'}"></span>${yes(c.connected)}`,esc(c.healthState||c.lifecycle||'-')+(c.lastError?`<div class="small muted">${esc(c.lastError)}</div>`:''),esc(c.lastConnectedAt||'-'),c.terminal_disconnects_today?`${c.terminal_disconnects_today} (ล่าสุด ${esc(c.last_terminal_disconnect)})`:'0',esc(c.errors_today)]))
+    +(d.failed_deliveries?`<div class="note" style="margin-top:8px">ข้อความขาออกที่ส่งไม่สำเร็จค้างในคิว: ${esc(d.failed_deliveries)}</div>`:'')+(d.live_error?`<div class="note">ถาม gateway ไม่ได้: ${esc(d.live_error)} (ใช้ข้อมูลจากล็อกแทน)</div>`:''),
+  automations:d=>table(['งาน','เปิด','ผลล่าสุด','รันล่าสุด','รอบถัดไป'],(d.jobs||[]).map(j=>[esc(j.name)+(j.last_error?`<div class="small muted">${esc(j.last_error)}</div>`:''),yes(j.enabled),badge(j.last_status==='ok'?'ok':j.last_status==='error'?'warn':'unknown',j.last_status||'-')+(j.consecutive_errors>1?` <span class="small muted">${j.consecutive_errors} ครั้งติด</span>`:''),esc(j.last_run||'-'),esc(j.next_run||'-')])),
+  oauth:d=>table(['ผู้ให้บริการ','จำนวน','หมดอายุเร็วสุด','เหลือ'],(d.providers||[]).map(p=>[esc(p.provider),esc(p.sessions),esc(p.earliest_expiry||'-'),p.days_left!=null?esc(p.days_left)+' วัน':'-'])),
+  readme_tools:d=>kv([['README (แถว 8765)',esc(d.documented??'ไม่ระบุ')],['tools ที่รันอยู่จริง',esc(d.live)],['ที่มา',esc(d.source)]]),
+  payload:d=>kv([['exit code',esc(d.exit_code)],['เทียบ',d.compared!=null?`${d.compared} ไฟล์ · ตรง ${d.identical} · ไม่ตรง ${d.unexpected}`:null]])+((d.issues||[]).length?`<ul class="problems small">${d.issues.map(i=>`<li>${esc(i)}</li>`).join('')}</ul>`:''),
+  processes:d=>kv([['node_repl.exe',esc(d.node_repl)+(d.node_repl_ram_mb?` (~${Number(d.node_repl_ram_mb).toLocaleString()} MB)`:'')],['ตัวแม่',esc(Object.entries(d.node_repl_parents||{}).map(([k,v])=>`${k} ×${v}`).join(', ')||'-')],['llama-server.exe',esc(d.llama_server)],['ollama.exe',esc(d.ollama)],['โปรเซสทั้งหมด',esc(d.total_processes)]]),
+};
+function render(){
+  if(!report)return;
+  const r=report,checks=r.checks||{};
+  const worst=Object.values(checks).reduce((w,c)=>({ok:0,unknown:1,warn:2,bad:3}[c.status]>({ok:0,unknown:1,warn:2,bad:3}[w])?c.status:w),'ok');
+  const th={ok:'ปกติ',warn:'ควรดู',bad:'มีปัญหา',unknown:'ตรวจไม่ได้'};
+  $('overall').className='badge big '+(CLS[worst]||'unk');$('overall').textContent='สถานะรวม: '+th[worst];
+  const counts={ok:0,warn:0,bad:0,unknown:0};Object.values(checks).forEach(c=>counts[c.status]=(counts[c.status]||0)+1);
+  $('meta').textContent=`ตรวจเมื่อ ${r.checked_at||'-'} · ใช้เวลา ${r.took_s??'-'} วินาที · ปกติ ${counts.ok} · ควรดู ${counts.warn} · มีปัญหา ${counts.bad} · ตรวจไม่ได้ ${counts.unknown}`;
+  const probs=Object.values(checks).filter(c=>c.status==='bad'||c.status==='warn').sort((a,b)=>(b.status==='bad')-(a.status==='bad'));
+  $('problems').innerHTML=probs.length?probs.map(c=>`<li>${badge(c.status,c.status_th)} <b>${esc(c.title)}</b>: ${esc(c.summary)}</li>`).join(''):'<li class="muted">ไม่พบปัญหา</li>';
+  $('checks').innerHTML=Object.entries(checks).map(([k,c])=>{let body='';try{body=(RENDER[k]||(()=>''))(c.details||{})}catch(e){body=''}
+    return `<article class="card ${WIDE.has(k)?'wide':''} ${c.status==='bad'?'bad':c.status==='warn'?'warn':''}"><h2><span>${esc(c.title)}</span>${badge(c.status,c.status_th)}</h2><div class="summary">${esc(c.summary)}</div>${body}${c.cached_s!=null?`<div class="note small">ผลจากแคช ${esc(c.cached_s)} วินาทีก่อน</div>`:''}</article>`}).join('');
+}
+function show(text){$('msg').style.display=text?'block':'none';$('msg').textContent=text||''}
+async function fetchState(query){const r=await fetch('/status/api/state'+query,{headers:{'Accept':'application/json'}});const j=await r.json();if(!r.ok||j.ok===false)throw new Error(j.error||r.statusText);return j}
+async function load(fresh){
+  if(busy)return;busy=true;$('fullBtn').disabled=true;if(fresh)show('กำลังตรวจทั้งหมด (ไม่เกิน ~15 วินาที)...');
+  try{report=await fetchState(fresh?'?fresh=1':'');show('');render()}catch(e){show('โหลดสถานะไม่ได้: '+e.message)}
+  finally{busy=false;$('fullBtn').disabled=false}
+}
+async function light(){
+  if(busy||!report||!$('auto').checked||document.hidden)return;busy=true;
+  try{const j=await fetchState('?only=light');report.checks={...report.checks,...j.checks};report.checked_at=j.checked_at;report.took_s=j.took_s;render()}catch(e){}
+  finally{busy=false}
+}
+load(false);setInterval(light,15000);
+</script>
+</body>
+</html>

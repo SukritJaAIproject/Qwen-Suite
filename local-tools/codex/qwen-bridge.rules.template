@@ -1,0 +1,40 @@
+# Codex-Qwen bridge exec rules (Starlark). Copied to <CODEX_HOME>\rules\qwen-bridge.rules
+# before every run. Hard blocks only - never "prompt": nobody is there to answer.
+#
+# Codex 0.146 parses the PowerShell the model writes and checks each command in it
+# (case-insensitive, "x.exe" and full paths match "x"). It does NOT see through
+# "& x", "if (...) { x }" or other script blocks, so these rules are a speed bump like the
+# gateway's _blocked_command, not a sandbox. Nested shells are blocked for that reason.
+
+# Credential stores - the owner's standing rule: never touch them. These block the TOOLS by
+# name only; reading credential FILES (.codex\auth.json, .openclaw, Chrome Login Data) is not
+# stopped here - Get-Content is one of Codex's known-safe reads and a prefix rule cannot match
+# every path spelling. codex_jobs.list_jobs hides/masks such answers before chat sees them.
+prefix_rule(pattern = [["cmdkey", "vaultcmd", "keymgr", "rundll32", "Get-StoredCredential", "Get-Credential"]], decision = "forbidden", justification = "ห้ามแตะที่เก็บรหัสผ่านของ Windows (credential store)")
+
+# Machine, disk and backup changes.
+prefix_rule(pattern = [["shutdown", "Restart-Computer", "Stop-Computer", "format", "Format-Volume", "diskpart", "bcdedit", "Clear-Disk", "Initialize-Disk", "Remove-Partition", "vssadmin", "wbadmin", "cipher"]], decision = "forbidden", justification = "ห้ามปิดเครื่องหรือแก้ไขดิสก์/ระบบ")
+
+# Permissions, users, services, registry, scheduled tasks, security settings.
+prefix_rule(pattern = [["icacls", "cacls", "takeown", "Set-Acl", "New-LocalUser", "Add-LocalGroupMember", "Stop-Service", "Restart-Service", "Set-Service", "schtasks", "Register-ScheduledTask", "Unregister-ScheduledTask", "Set-ExecutionPolicy", "Set-MpPreference", "netsh"]], decision = "forbidden", justification = "ห้ามเปลี่ยนสิทธิ์ไฟล์ ผู้ใช้ บริการ หรือการตั้งค่าความปลอดภัยของ Windows")
+prefix_rule(pattern = ["net", ["user", "localgroup", "stop", "start", "share"]], decision = "forbidden", justification = "ห้ามเปลี่ยนผู้ใช้หรือบริการของ Windows")
+prefix_rule(pattern = ["reg", ["add", "delete", "import", "restore", "load", "unload"]], decision = "forbidden", justification = "ห้ามแก้ไข registry")
+
+# The suite itself: models, services and the chat channels.
+prefix_rule(pattern = [["ollama", "openclaw", "openclaw.cmd", "taskkill", "Stop-Process", "spps", "kill"]], decision = "forbidden", justification = "ห้ามจัดการโมเดล บริการของ Qwen Suite หรือส่งข้อความออกช่องแชต")
+
+# Network and installs: jobs work on local files only.
+prefix_rule(pattern = [["Invoke-WebRequest", "iwr", "Invoke-RestMethod", "irm", "curl", "wget", "Start-BitsTransfer", "bitsadmin", "certutil", "winget", "choco", "npx", "Install-Module", "Install-Package", "Save-Module"]], decision = "forbidden", justification = "งานนี้ห้ามใช้เครือข่ายหรือดาวน์โหลด/ติดตั้งโปรแกรม")
+prefix_rule(pattern = [["pip", "pip3"], "install"], decision = "forbidden", justification = "ห้ามติดตั้งแพ็กเกจ")
+prefix_rule(pattern = [["python", "python3", "py"], "-m", "pip", "install"], decision = "forbidden", justification = "ห้ามติดตั้งแพ็กเกจ")
+prefix_rule(pattern = ["conda", ["install", "create", "update", "remove"]], decision = "forbidden", justification = "ห้ามติดตั้งหรือแก้ไข conda env")
+prefix_rule(pattern = ["npm", ["install", "i", "ci", "update", "publish"]], decision = "forbidden", justification = "ห้ามติดตั้งแพ็กเกจ npm")
+prefix_rule(pattern = ["git", ["push", "pull", "fetch", "clone", "clean"]], decision = "forbidden", justification = "ห้ามใช้ git กับเครือข่าย หรือ git clean")
+prefix_rule(pattern = ["git", "reset", "--hard"], decision = "forbidden", justification = "ห้าม git reset --hard")
+
+# Recursive deletes (only the plain forms; see the note at the top).
+prefix_rule(pattern = [["Remove-Item", "rm", "del", "erase", "ri"], ["-Recurse", "-r", "-rf", "-fr", "/s"]], decision = "forbidden", justification = "ห้ามลบแบบทั้งโฟลเดอร์")
+prefix_rule(pattern = [["rd", "rmdir"], "/s"], decision = "forbidden", justification = "ห้ามลบแบบทั้งโฟลเดอร์")
+
+# Ways out of the job: detached processes, nested shells, evaluated strings.
+prefix_rule(pattern = [["Start-Process", "saps", "start", "Start-Job", "Invoke-Expression", "iex", "powershell", "pwsh", "cmd", "wsl", "bash"]], decision = "forbidden", justification = "ห้ามเปิด shell ซ้อนหรือโปรเซสแยกนอกงาน")

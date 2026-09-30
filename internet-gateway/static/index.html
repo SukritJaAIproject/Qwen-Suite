@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Qwen Internet · Extend Mode</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #060914;
+      --surface: rgba(15, 21, 36, .88);
+      --surface-strong: #111a2c;
+      --line: rgba(148, 163, 184, .18);
+      --text: #f1f5ff;
+      --muted: #98a6bd;
+      --accent: #8b6cff;
+      --accent-2: #29d3b2;
+      --danger: #ff6f84;
+      --warning: #f7c66a;
+      --shadow: 0 26px 80px rgba(0, 0, 0, .42);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 12% 0, rgba(113, 76, 255, .22), transparent 34rem),
+        radial-gradient(circle at 92% 10%, rgba(41, 211, 178, .09), transparent 28rem),
+        linear-gradient(145deg, #060914, #090e1b 58%, #060914);
+      font: 15px/1.55 Inter, "Noto Sans Thai", "Segoe UI", system-ui, sans-serif;
+    }
+
+    button, input, textarea { font: inherit; }
+    button { -webkit-tap-highlight-color: transparent; }
+    main { width: min(980px, calc(100% - 28px)); margin: 0 auto; padding: 30px 0 64px; }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+    .brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+    .logo {
+      width: 48px;
+      height: 48px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      border-radius: 16px;
+      color: #fff;
+      background: linear-gradient(145deg, var(--accent), #3aa4ff);
+      box-shadow: 0 13px 38px rgba(95, 75, 255, .38);
+      font-size: 20px;
+      font-weight: 850;
+    }
+    h1 { margin: 0; font-size: clamp(20px, 3vw, 24px); letter-spacing: -.025em; }
+    .subtitle { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+    .mode-badges { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(12, 20, 35, .74);
+      color: #c9d5e8;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .badge.live { color: var(--accent-2); border-color: rgba(41, 211, 178, .24); }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+    .card {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px) saturate(130%);
+    }
+    .settings { display: grid; grid-template-columns: 2fr 1fr auto; gap: 10px; margin-bottom: 12px; }
+    input, textarea {
+      width: 100%;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      outline: none;
+      background: rgba(5, 10, 22, .8);
+      transition: border-color .16s, box-shadow .16s;
+    }
+    input { padding: 11px 12px; }
+    textarea { min-height: 142px; padding: 13px; resize: vertical; }
+    input:focus, textarea:focus {
+      border-color: rgba(139, 108, 255, .72);
+      box-shadow: 0 0 0 3px rgba(139, 108, 255, .1);
+    }
+
+    .options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+    .option {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      min-height: 72px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: rgba(7, 13, 27, .72);
+      cursor: pointer;
+      transition: border-color .16s, transform .16s, background .16s;
+    }
+    .option:hover { transform: translateY(-1px); border-color: rgba(139, 108, 255, .38); }
+    .option:has(input:checked) {
+      border-color: rgba(139, 108, 255, .48);
+      background: linear-gradient(135deg, rgba(124, 58, 237, .14), rgba(41, 211, 178, .055));
+    }
+    .option input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); }
+    .option strong { display: block; color: var(--text); font-size: 13px; }
+    .option small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+
+    .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 9px; margin-top: 12px; }
+    button {
+      min-height: 42px;
+      padding: 10px 16px;
+      color: #fff;
+      border: 0;
+      border-radius: 13px;
+      background: linear-gradient(135deg, var(--accent), #4169e1);
+      font-weight: 750;
+      cursor: pointer;
+      transition: transform .16s, filter .16s, opacity .16s;
+    }
+    button:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.08); }
+    button:disabled { opacity: .48; cursor: wait; }
+    button.secondary { color: #d9e1ef; border: 1px solid var(--line); background: #1a2538; }
+    button.continue {
+      color: #fff;
+      border: 1px solid rgba(41, 211, 178, .3);
+      background: linear-gradient(135deg, #6349dc, #139a87);
+    }
+    button.stop { color: #ffd9de; border: 1px solid rgba(255, 111, 132, .3); background: #3a1d2a; }
+    [hidden] { display: none !important; }
+
+    .notice {
+      min-height: 52px;
+      margin-top: 16px;
+      padding: 13px 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      color: var(--muted);
+      background: rgba(5, 10, 22, .72);
+    }
+    .notice.error { color: var(--danger); border-color: rgba(255, 111, 132, .28); }
+    .notice.working {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--warning);
+    }
+    .notice.working::before {
+      content: "";
+      width: 16px;
+      height: 16px;
+      flex: 0 0 auto;
+      border: 2px solid rgba(247, 198, 106, .24);
+      border-top-color: currentColor;
+      border-radius: 50%;
+      animation: thinking-spin .8s linear infinite;
+    }
+    @keyframes thinking-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .notice.working::before { animation-duration: 1.8s; }
+    }
+
+    .transcript { margin-top: 14px; display: grid; gap: 10px; }
+    .transcript-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .transcript-head h2 { margin: 0; font-size: 15px; }
+    .segment {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(8, 14, 27, .82);
+    }
+    .segment-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 12px;
+      color: var(--muted);
+      border-bottom: 1px solid rgba(148, 163, 184, .11);
+      font-size: 11px;
+    }
+    .segment pre {
+      margin: 0;
+      padding: 15px;
+      color: var(--text);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font: inherit;
+    }
+    .privacy { margin-top: 14px; color: var(--muted); font-size: 12px; }
+    .privacy strong { color: var(--accent-2); }
+
+    @media (max-width: 720px) {
+      main { padding-top: 18px; }
+      .topbar { align-items: flex-start; }
+      .mode-badges { display: none; }
+      .settings, .options { grid-template-columns: 1fr; }
+      .settings button { width: 100%; }
+      .actions { display: grid; grid-template-columns: 1fr 1fr; }
+      .actions button { width: 100%; }
+      #send, #continue { grid-column: 1 / -1; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">Q</div>
+        <div>
+          <h1>Qwen Internet</h1>
+          <p class="subtitle">qwen3.8:27b · ตอบต่อเนื่องจากทุกอุปกรณ์</p>
+        </div>
+      </div>
+      <div class="mode-badges" aria-label="สถานะระบบ">
+        <span class="badge live"><span class="dot"></span>ออนไลน์</span>
+        <span class="badge">Context 32K</span>
+        <span class="badge">Extend Mode</span>
+      </div>
+    </header>
+
+    <section class="card">
+      <div class="settings">
+        <input id="key" type="password" autocomplete="off" placeholder="API key จากหน้า Qwen Internet Setup">
+        <input id="session" value="default" maxlength="64" placeholder="ชื่อ session">
+        <button id="save" class="secondary" type="button">จำค่าในแท็บนี้</button>
+      </div>
+
+      <div class="options">
+        <label class="option" for="web">
+          <input id="web" type="checkbox">
+          <span><strong>ค้นข้อมูลล่าสุดจากอินเทอร์เน็ต</strong><small>ค้นเว็บและแนบแหล่งอ้างอิงที่ตรวจสอบ URL แล้ว</small></span>
+        </label>
+        <label class="option" for="extend">
+          <input id="extend" type="checkbox">
+          <span><strong>Extend Mode</strong><small>ต่อให้อัตโนมัติเมื่อชนเพดาน สูงสุด 3 ช่วงต่อรอบ แล้วกดต่อเองได้อีก</small></span>
+        </label>
+      </div>
+
+      <textarea id="prompt" maxlength="8000" placeholder="พิมพ์คำถาม… (Ctrl+Enter เพื่อส่ง)"></textarea>
+      <div class="actions">
+        <button id="clear" class="secondary" type="button">เริ่มแชทใหม่</button>
+        <button id="stop" class="stop" type="button" hidden>หยุดต่ออัตโนมัติ</button>
+        <button id="continue" class="continue" type="button" hidden>▶ ต่อคำตอบ</button>
+        <button id="send" type="button">ส่งให้ Qwen</button>
+      </div>
+
+      <div id="notice" class="notice" role="status" aria-live="polite">พร้อมรับข้อความ · API key เก็บเฉพาะในแท็บนี้และไม่อยู่ใน URL</div>
+      <section id="transcript" class="transcript" hidden aria-label="คำตอบจาก Qwen">
+        <div class="transcript-head">
+          <h2>คำตอบต่อเนื่อง</h2>
+          <span id="segment-count" class="badge"></span>
+        </div>
+        <div id="segments"></div>
+      </section>
+
+      <div class="privacy"><strong>โหมดปลอดภัย:</strong> หน้านี้ส่งได้เฉพาะข้อความและผลค้นเว็บ ไม่มีสิทธิ์เปิดไฟล์ รันคำสั่ง หรือควบคุมเครื่อง การกด “ต่อคำตอบ” จะสร้าง user turn ใหม่เพื่อหลีกเลี่ยงบั๊ก tool-only ของ Qwen3.8</div>
+    </section>
+  </main>
+
+  <script>
+    const byId = (id) => document.getElementById(id);
+    const key = byId('key');
+    const session = byId('session');
+    const web = byId('web');
+    const extend = byId('extend');
+    const prompt = byId('prompt');
+    const send = byId('send');
+    const continueButton = byId('continue');
+    const stopButton = byId('stop');
+    const notice = byId('notice');
+    const transcript = byId('transcript');
+    const segmentsRoot = byId('segments');
+    const segmentCount = byId('segment-count');
+
+    send.dataset.idleLabel = send.textContent;
+    continueButton.dataset.idleLabel = continueButton.textContent;
+
+    const AUTO_SEGMENT_LIMIT = 3;
+    const CONTINUE_MARKER = '[ยังมีต่อ — กด ต่อคำตอบ]';
+    let currentJobId = null;
+    let busy = false;
+    let stopAuto = false;
+    let autoSegments = 0;
+    let segments = [];
+
+    key.value = sessionStorage.getItem('qwen_api_key') || '';
+    session.value = sessionStorage.getItem('qwen_session') || 'default';
+    web.checked = sessionStorage.getItem('qwen_web_search') === 'true';
+    extend.checked = sessionStorage.getItem('qwen_extend_mode') === 'true';
+
+    function headers(includeJson = false) {
+      return {
+        'Authorization': 'Bearer ' + key.value.trim(),
+        ...(includeJson ? {'Content-Type': 'application/json'} : {})
+      };
+    }
+
+    function rememberSettings() {
+      sessionStorage.setItem('qwen_api_key', key.value.trim());
+      sessionStorage.setItem('qwen_session', session.value.trim() || 'default');
+      sessionStorage.setItem('qwen_web_search', String(web.checked));
+      sessionStorage.setItem('qwen_extend_mode', String(extend.checked));
+    }
+
+    function showNotice(text, kind = '') {
+      notice.className = 'notice' + (kind ? ' ' + kind : '');
+      notice.textContent = kind === 'working' && !text.startsWith('Thinking')
+        ? 'Thinking… · ' + text
+        : text;
+      notice.setAttribute('aria-busy', String(kind === 'working'));
+    }
+
+    function setBusy(value) {
+      busy = value;
+      send.disabled = value;
+      continueButton.disabled = value;
+      session.disabled = value;
+      send.textContent = value ? 'Thinking…' : send.dataset.idleLabel;
+      continueButton.textContent = value ? 'Thinking…' : continueButton.dataset.idleLabel;
+      if (!value) stopButton.hidden = true;
+    }
+
+    function renderSegments(latestJob = null) {
+      transcript.hidden = segments.length === 0;
+      segmentsRoot.replaceChildren();
+      segmentCount.textContent = segments.length + (segments.length === 1 ? ' ช่วง' : ' ช่วง');
+
+      for (const [index, segment] of segments.entries()) {
+        const article = document.createElement('article');
+        article.className = 'segment';
+        const head = document.createElement('div');
+        head.className = 'segment-head';
+        const label = document.createElement('span');
+        label.textContent = 'ช่วงที่ ' + (index + 1);
+        const usage = document.createElement('span');
+        const details = [];
+        if (segment.eval_count) details.push('ตอบ ' + segment.eval_count + ' tokens');
+        if (segment.prompt_eval_count) details.push('บริบท ' + segment.prompt_eval_count + ' tokens');
+        usage.textContent = details.join(' · ');
+        const body = document.createElement('pre');
+        body.textContent = segment.result || '';
+        head.append(label, usage);
+        article.append(head, body);
+        segmentsRoot.append(article);
+      }
+
+      continueButton.hidden = segments.length === 0;
+      if (latestJob) {
+        const reason = latestJob.done_reason === 'length' ? 'ถึงเพดานของช่วงนี้' : 'จบช่วงแล้ว';
+        showNotice(reason + ' · กด “ต่อคำตอบ” ได้ทุกเมื่อ');
+      }
+      segmentsRoot.lastElementChild?.scrollIntoView({behavior: 'smooth', block: 'start'});
+    }
+
+    async function poll(jobId) {
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const response = await fetch(
+          '/api/v1/jobs/' + encodeURIComponent(jobId) + '?session_id=' + encodeURIComponent(session.value.trim() || 'default'),
+          {headers: headers()}
+        );
+        const job = await response.json();
+        if (!response.ok) throw new Error(job.detail || 'อ่านสถานะไม่สำเร็จ');
+
+        if (job.status === 'completed') {
+          if (!segments.some((item) => item.id === job.id)) segments.push(job);
+          currentJobId = job.id;
+          setBusy(false);
+          renderSegments(job);
+
+          const needsMore = job.done_reason === 'length' || (job.result || '').includes(CONTINUE_MARKER);
+          if (extend.checked && needsMore && !stopAuto && autoSegments < AUTO_SEGMENT_LIMIT - 1) {
+            autoSegments += 1;
+            showNotice('Extend Mode กำลังต่อช่วงที่ ' + (autoSegments + 1) + '…', 'working');
+            await queueContinue(true);
+          } else if (extend.checked && needsMore && autoSegments >= AUTO_SEGMENT_LIMIT - 1) {
+            showNotice('ต่ออัตโนมัติครบ ' + AUTO_SEGMENT_LIMIT + ' ช่วงแล้ว · กด “ต่อคำตอบ” เพื่อทำต่อได้อีก');
+          }
+          return job;
+        }
+        if (job.status === 'failed') throw new Error(job.error || 'Qwen ทำงานไม่สำเร็จ');
+        showNotice('กำลังประมวลผล… สถานะ ' + job.status + (job.queue_position ? ' · คิว ' + job.queue_position : ''), 'working');
+      }
+    }
+
+    async function queueContinue(automatic = false) {
+      if (!currentJobId || busy) return;
+      setBusy(true);
+      if (automatic) stopButton.hidden = false;
+      rememberSettings();
+      try {
+        const response = await fetch('/api/v1/jobs/' + encodeURIComponent(currentJobId) + '/continue', {
+          method: 'POST',
+          headers: {...headers(true), 'Idempotency-Key': crypto.randomUUID()},
+          body: JSON.stringify({session_id: session.value.trim() || 'default'})
+        });
+        const job = await response.json();
+        if (!response.ok) throw new Error(job.detail || 'ส่งคำสั่งต่อคำตอบไม่สำเร็จ');
+        showNotice((automatic ? 'Extend Mode' : 'รับคำสั่งต่อคำตอบแล้ว') + ' · งาน ' + job.job_id.slice(0, 8), 'working');
+        await poll(job.job_id);
+      } catch (error) {
+        setBusy(false);
+        showNotice(error.message, 'error');
+      }
+    }
+
+    async function submitPrompt() {
+      const text = prompt.value.trim();
+      if (busy) return;
+      if (!key.value.trim() || !text) {
+        showNotice('กรุณาใส่ API key และคำถาม', 'error');
+        return;
+      }
+
+      rememberSettings();
+      currentJobId = null;
+      segments = [];
+      autoSegments = 0;
+      stopAuto = false;
+      renderSegments();
+      setBusy(true);
+      try {
+        showNotice(web.checked ? 'กำลังส่งเข้าคิวค้นเว็บ…' : 'กำลังส่งเข้าคิว…', 'working');
+        const response = await fetch('/api/v1/prompt', {
+          method: 'POST',
+          headers: {...headers(true), 'Idempotency-Key': crypto.randomUUID()},
+          body: JSON.stringify({
+            prompt: text,
+            session_id: session.value.trim() || 'default',
+            web_search: web.checked
+          })
+        });
+        const job = await response.json();
+        if (!response.ok) throw new Error(job.detail || 'ส่งไม่สำเร็จ');
+        showNotice('รับงาน ' + job.job_id.slice(0, 8) + ' แล้ว' + (job.queue_position ? ' · คิว ' + job.queue_position : ''), 'working');
+        await poll(job.job_id);
+      } catch (error) {
+        setBusy(false);
+        showNotice(error.message, 'error');
+      }
+    }
+
+    byId('save').addEventListener('click', () => {
+      rememberSettings();
+      showNotice('บันทึกค่าสำหรับแท็บนี้แล้ว');
+    });
+    send.addEventListener('click', submitPrompt);
+    continueButton.addEventListener('click', () => queueContinue(false));
+    stopButton.addEventListener('click', () => {
+      stopAuto = true;
+      extend.checked = false;
+      rememberSettings();
+      stopButton.hidden = true;
+      showNotice('ปิดการต่ออัตโนมัติแล้ว · ช่วงที่กำลังประมวลผลจะทำให้เสร็จ');
+    });
+    extend.addEventListener('change', rememberSettings);
+    web.addEventListener('change', rememberSettings);
+
+    byId('clear').addEventListener('click', async () => {
+      if (!key.value.trim()) {
+        showNotice('กรุณาใส่ API key', 'error');
+        return;
+      }
+      try {
+        const id = session.value.trim() || 'default';
+        const response = await fetch('/api/v1/sessions/' + encodeURIComponent(id), {
+          method: 'DELETE',
+          headers: headers()
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || 'ล้าง session ไม่สำเร็จ');
+        prompt.value = '';
+        currentJobId = null;
+        segments = [];
+        autoSegments = 0;
+        stopAuto = false;
+        renderSegments();
+        showNotice('เริ่มบทสนทนาใหม่แล้ว');
+      } catch (error) {
+        showNotice(error.message, 'error');
+      }
+    });
+
+    prompt.addEventListener('keydown', (event) => {
+      if (event.ctrlKey && event.key === 'Enter') submitPrompt();
+    });
+  </script>
+</body>
+</html>

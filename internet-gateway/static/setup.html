@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Qwen Internet Setup</title>
+  <style>
+    :root{color-scheme:dark;--bg:#080c15;--card:#111827;--line:#29344a;--text:#eef2ff;--muted:#9aa8bf;--accent:#8068ff;--green:#35d1a7}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 80% 0,#24204c 0,transparent 40%),var(--bg);color:var(--text);font:15px/1.6 system-ui,"Segoe UI",sans-serif}main{width:min(850px,calc(100% - 28px));margin:36px auto}.head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:18px}h1{font-size:24px;margin:0}.badge{padding:6px 11px;border-radius:999px;background:#11352d;color:var(--green)}.card{background:#111827e8;border:1px solid var(--line);border-radius:20px;padding:20px;margin:14px 0;box-shadow:0 18px 55px #0005}h2{font-size:17px;margin:0 0 12px}.row{display:grid;grid-template-columns:180px 1fr auto;gap:10px;align-items:center;margin:9px 0}.label{color:var(--muted)}code{display:block;overflow-wrap:anywhere;background:#090f1c;border:1px solid var(--line);border-radius:10px;padding:9px 11px;color:#dfe7ff}button{border:1px solid var(--line);background:#202a40;color:white;border-radius:10px;padding:9px 12px;cursor:pointer}.steps{color:var(--muted)}.steps strong{color:var(--text)}a{color:#9d91ff}.warning{border-color:#55492a;background:#211d13;color:#f2d58a}.small{font-size:13px;color:var(--muted)}@media(max-width:650px){.row{grid-template-columns:1fr}.head{align-items:flex-start;flex-direction:column}}
+  </style>
+</head>
+<body><main>
+  <div class="head"><div><h1>Qwen Internet Setup</h1><div class="small">หน้านี้เปิดได้จากเครื่องนี้โดยตรงเท่านั้น</div></div><div class="badge">Gateway พร้อมใช้งาน</div></div>
+  <section class="card"><h2>เว็บ/API จากอินเทอร์เน็ต</h2>
+    <div class="row"><div class="label">Public URL</div><code id="url">{{PUBLIC_URL}}</code><button onclick="copy('url')">คัดลอก</button></div>
+    <div class="row"><div class="label">API key</div><code id="key">{{API_KEY}}</code><button onclick="copy('key')">คัดลอก</button></div>
+    <p class="small">อย่าส่ง API key ในแชทหรือโพสต์สาธารณะ หากรั่วให้หมุน key ใหม่ทันที</p>
+  </section>
+  <section class="card"><h2>LINE</h2>
+    <div class="row"><div class="label">สถานะ</div><code>{{LINE_STATUS}} · อนุญาตแล้ว {{ALLOWED_COUNT}} บัญชี</code><span></span></div>
+    <div class="row"><div class="label">Pairing token</div><code id="pair">{{PAIRING_CODE}}</code><button onclick="copy('pair')">คัดลอก</button></div>
+    <p class="small">หมดอายุ {{PAIRING_EXPIRY}} หากหมดอายุให้ reload หน้านี้เพื่อรับ token ใหม่</p>
+    <div class="steps"><strong>วิธีเชื่อม LINE:</strong> ดับเบิลคลิก <code>Qwen LINE Setup</code> บน Desktop (หรือเปิด <code>E:\localllm\internet-gateway\configure-line.ps1</code>) แล้วกรอก Channel secret และ Channel access token ในหน้าต่างเครื่องนี้ จากนั้นเพิ่ม Official Account และส่ง <code>/pair รหัสด้านบน</code></div>
+  </section>
+  <section class="card warning"><strong>ความปลอดภัย:</strong> อินเทอร์เน็ตเข้าถึงได้เฉพาะ gateway พอร์ต 8780 เท่านั้น พอร์ต Open WebUI, Ollama และ Local Computer tools ไม่ถูกเปิดออกภายนอก และ Qwen Remote ไม่มีเครื่องมือควบคุมคอมพิวเตอร์</section>
+</main><script>function copy(id){navigator.clipboard.writeText(document.getElementById(id).textContent.trim())}</script></body></html>

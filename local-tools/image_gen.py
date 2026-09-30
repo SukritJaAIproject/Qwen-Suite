@@ -1,0 +1,313 @@
+"""generate_image: text-to-image through Runway's developer API (added 2026-09-30, OPTIONAL).
+
+Why this module has its own credential: the only Runway logins on this machine are Open WebUI's
+MCP OAuth sessions (webui.db oauth_session, encrypted with Open WebUI's secret). Those tokens stay
+inside Open WebUI; this module never reads them. Instead it uses a Runway *developer API* key
+that the owner creates himself at https://dev.runwayml.com (API credits are bought there and are
+separate from the Runway app plan's credits).
+
+The key is read at call time from the RUNWAYML_API_SECRET environment variable: the process
+environment first, then the owner's saved user variable (HKCU\\Environment), so
+`setx RUNWAYML_API_SECRET <key>` typed by the owner in his own PowerShell works without a
+restart. The key only ever goes into the Authorization header of requests to API_BASE; it is
+never logged, returned, written to disk or sent to the image CDN, and any echo of it in an error
+text is redacted. Without a key the tool answers status=not_configured and changes nothing.
+
+Every generation spends Runway API credits (gen4_image: 5 credits at 720p, 8 at 1080p) and sends
+the prompt (and the reference image, if any) to Runway's cloud. A task that is still running at
+the timeout is not lost: call again with task_id=<id> to fetch it without spending credits again.
+The picture goes to the project's outputs folder (never overwrites, document_builder._reserve)
+plus a copy in the OpenClaw workspace for Telegram (MEDIA:<telegram_attachment>).
+"""
+from __future__ import annotations
+
+import base64
+import io
+import os
+import re
+import time
+from pathlib import Path
+from typing import Any, Callable
+
+import document_builder as DB
+
+API_BASE = "https://api.dev.runwayml.com"
+API_VERSION = "2024-11-06"
+MODEL = "gen4_image"
+ENV_NAME = "RUNWAYML_API_SECRET"
+CREDITS = {"720p": 5, "1080p": 8}
+RATIOS = {
+    "16:9": {"720p": "1280:720", "1080p": "1920:1080"},
+    "1:1": {"720p": "720:720", "1080p": "1080:1080"},
+    "9:16": {"720p": "720:1280", "1080p": "1080:1920"},
+    "4:3": {"720p": "960:720", "1080p": "1440:1080"},
+    "3:4": {"720p": "720:960", "1080p": "1080:1440"},
+}
+_RATIO_ALIASES = {"landscape": "16:9", "แนวนอน": "16:9", "square": "1:1", "สี่เหลี่ยมจัตุรัส": "1:1",
+                  "portrait": "9:16", "แนวตั้ง": "9:16", "vertical": "9:16", "story": "9:16", "reels": "9:16"}
+MAX_PROMPT = 1000
+POLL_SECONDS = 5          # Runway asks clients not to poll faster than every 5 s
+TIMEOUT = 240
+MAX_DOWNLOAD = 30 * 1024 * 1024
+MAX_REFERENCE_SIDE = 2048
+MAX_REFERENCE_BYTES = 3_500_000   # base64 grows it by 4/3; Runway takes data URIs up to ~5 MB
+REFERENCE_TAG = "ref"
+_TERMINAL_FAIL = {"FAILED", "CANCELLED"}
+
+
+class _NotConfigured(Exception):
+    pass
+
+
+def _api_key() -> tuple[str, str]:
+    key = os.environ.get(ENV_NAME, "").strip()
+    if key:
+        return key, "process environment"
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as handle:
+            value, _kind = winreg.QueryValueEx(handle, ENV_NAME)
+        if str(value).strip():
+            return str(value).strip(), "user environment (setx)"
+    except OSError:
+        pass
+    return "", ""
+
+
+def _not_configured() -> dict[str, Any]:
+    return {
+        "status": "not_configured",
+        "message": ("ยังไม่ได้ตั้ง Runway API key จึงสร้างรูปไม่ได้ (ไม่มีการใช้เครดิต). เจ้าของเครื่องสร้าง key เองที่ "
+                    "https://dev.runwayml.com (เครดิต API ซื้อแยกจากแพ็กเกจแอป Runway) แล้วพิมพ์ใน PowerShell ของตัวเอง: "
+                    "setx RUNWAYML_API_SECRET <key> — ห้ามส่ง key ในแชทหรือ Telegram. "
+                    "ในหน้าแชท Open WebUI ใช้เครื่องมือ Runway (MCP) ที่ล็อกอินไว้แทนได้"),
+    }
+
+
+def _redact(text: str, key: str) -> str:
+    text = str(text or "")
+    if key:
+        text = text.replace(key, "<redacted>")
+    return re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{12,}", r"\1<redacted>", text)[:600]
+
+
+def _headers(key: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {key}", "X-Runway-Version": API_VERSION, "Content-Type": "application/json"}
+
+
+def _error_text(response, key: str) -> str:
+    try:
+        body = response.json()
+        if isinstance(body, dict):
+            parts = [str(body.get("error") or body.get("message") or "")]
+            issues = body.get("issues")
+            if isinstance(issues, list):
+                parts += [str(i.get("message") if isinstance(i, dict) else i) for i in issues[:3]]
+            text = "; ".join(p for p in parts if p) or str(body)
+        else:
+            text = str(body)
+    except ValueError:
+        text = getattr(response, "text", "") or ""
+    return _redact(text, key)
+
+
+def _raise_for(response, key: str, what: str) -> None:
+    code = response.status_code
+    if code < 400:
+        return
+    detail = _error_text(response, key)
+    if code == 401:
+        raise RuntimeError(f"Runway ปฏิเสธ API key (401) ตอน{what}: key ผิดหรือถูกยกเลิก — ตั้ง {ENV_NAME} ใหม่")
+    if code == 429:
+        raise RuntimeError(f"Runway จำกัดจำนวนคำขอ (429) ตอน{what}: ลองใหม่อีกสักครู่. {detail}")
+    if "credit" in detail.lower():
+        raise RuntimeError(f"เครดิต Runway API ไม่พอ ({code}) ตอน{what}: {detail}")
+    raise RuntimeError(f"Runway ตอบ {code} ตอน{what}: {detail}")
+
+
+def _ratio(ratio: Any, quality: str) -> str:
+    text = str(ratio or "16:9").strip().lower()
+    text = _RATIO_ALIASES.get(text, text)
+    if text in RATIOS:
+        return RATIOS[text][quality]
+    allowed = {r for sizes in RATIOS.values() for r in sizes.values()}
+    if text in allowed:
+        return text
+    raise ValueError("ratio must be 16:9, 1:1, 9:16 (also 4:3, 3:4) or an exact Runway size such as 1920:1080")
+
+
+def _reference_uri(reference_image: Any) -> str:
+    """https URL as is; a local image (the caller resolved and permission-checked the path) as a data URI."""
+    ref = str(reference_image or "").strip()
+    if not ref:
+        return ""
+    if re.match(r"(?i)^https://", ref):
+        return ref
+    if re.match(r"(?i)^[a-z][a-z0-9+.-]*://", ref):
+        raise ValueError("reference_image must be an https:// URL or an image file in the project")
+    path = Path(ref)
+    if not path.is_file():
+        raise FileNotFoundError(f"reference image not found: {path}")
+    from PIL import Image
+
+    raw = path.read_bytes()
+    with Image.open(io.BytesIO(raw)) as im:
+        fmt = (im.format or "").upper()
+        if fmt in {"JPEG", "PNG", "WEBP"} and len(raw) <= MAX_REFERENCE_BYTES and max(im.size) <= MAX_REFERENCE_SIDE:
+            mime = {"JPEG": "jpeg", "PNG": "png", "WEBP": "webp"}[fmt]
+            return f"data:image/{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+        im = im.convert("RGB")
+        im.thumbnail((MAX_REFERENCE_SIDE, MAX_REFERENCE_SIDE), Image.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=90)
+    return f"data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode('ascii')}"
+
+
+def _download(http, url: str) -> bytes:
+    if not re.match(r"(?i)^https://", str(url or "")):
+        raise RuntimeError("Runway returned a non-https output URL; not downloaded")
+    # No Authorization header: the API key never leaves for the CDN host.
+    with http.get(url, stream=True, timeout=60) as response:
+        if response.status_code >= 400:
+            raise RuntimeError(f"ดาวน์โหลดรูปจาก Runway ไม่ได้ ({response.status_code}); ลิงก์อาจหมดอายุ")
+        data = bytearray()
+        for chunk in response.iter_content(65536):
+            data.extend(chunk)
+            if len(data) > MAX_DOWNLOAD:
+                raise RuntimeError("รูปจาก Runway ใหญ่เกิน 30 MB")
+    return bytes(data)
+
+
+def account_status(check_credits: bool = False, http=None) -> dict[str, Any]:
+    """Is a key configured (and, with check_credits, the read-only credit balance). Never returns the key."""
+    key, source = _api_key()
+    result: dict[str, Any] = {"configured": bool(key), "key_source": source or None}
+    if key and check_credits:
+        import requests
+
+        http = http or requests.Session()
+        response = http.get(f"{API_BASE}/v1/organization", headers=_headers(key), timeout=30)
+        _raise_for(response, key, "อ่านยอดเครดิต")
+        body = response.json()
+        result["credit_balance"] = body.get("creditBalance")
+    return result
+
+
+def generate(out_dir: Path, prompt: str = "", ratio: Any = "16:9", output_name: str = "", reference_image: Any = "",
+             task_id: str = "", quality: str = "720p", timeout: float = TIMEOUT, http=None,
+             sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
+    quality = str(quality or "720p").strip().lower()
+    if quality not in CREDITS:
+        raise ValueError("quality must be 720p or 1080p")
+    task_id = str(task_id or "").strip()
+    resumed = bool(task_id)
+    if task_id and not re.fullmatch(r"[A-Za-z0-9-]{8,64}", task_id):
+        raise ValueError("task_id looks wrong (it is the id returned by an earlier generate_image call)")
+    prompt = str(prompt or "").strip()
+    if not task_id:
+        if not prompt:
+            raise ValueError("prompt is required (describe the picture; English usually works best)")
+        if len(prompt) > MAX_PROMPT:
+            raise ValueError(f"prompt is too long ({len(prompt)} > {MAX_PROMPT} characters)")
+    size = _ratio(ratio, quality)
+    reference = "" if task_id else _reference_uri(reference_image)
+    key, _source = _api_key()
+    if not key:
+        return _not_configured()
+    if http is None:
+        import requests
+
+        http = requests.Session()
+    started = time.monotonic()
+    try:
+        if not task_id:
+            body: dict[str, Any] = {"model": MODEL, "promptText": prompt, "ratio": size}
+            if reference:
+                body["referenceImages"] = [{"uri": reference, "tag": REFERENCE_TAG}]
+            response = http.post(f"{API_BASE}/v1/text_to_image", json=body, headers=_headers(key), timeout=60)
+            _raise_for(response, key, "สั่งสร้างรูป")
+            task_id = str(response.json().get("id") or "")
+            if not task_id:
+                raise RuntimeError("Runway did not return a task id")
+        deadline = time.monotonic() + max(10.0, float(timeout))
+        task: dict[str, Any] = {}
+        while True:
+            try:
+                response = http.get(f"{API_BASE}/v1/tasks/{task_id}", headers=_headers(key), timeout=30)
+                if response.status_code in (429, 500, 502, 503, 504):
+                    task = {"status": "RETRY"}
+                else:
+                    _raise_for(response, key, "ตรวจสถานะงาน")
+                    task = response.json() or {}
+            except (OSError, ValueError):  # connection drop / bad JSON: keep polling until the deadline
+                task = {"status": "RETRY"}
+            status = str(task.get("status") or "").upper()
+            if status == "SUCCEEDED":
+                break
+            if status in _TERMINAL_FAIL:
+                return {
+                    "status": "failed",
+                    "task_id": task_id,
+                    "runway_status": status,
+                    "failure": _redact(task.get("failure") or "", key),
+                    "failure_code": task.get("failureCode"),
+                    "message": "Runway สร้างรูปไม่สำเร็จ (เช่น prompt ไม่ผ่านการตรวจเนื้อหา) — ปรับ prompt แล้วลองใหม่",
+                }
+            if time.monotonic() >= deadline:
+                return {
+                    "status": "timeout",
+                    "task_id": task_id,
+                    "runway_status": status or "UNKNOWN",
+                    "message": (f"ยังไม่เสร็จใน {int(timeout)} วินาที. เรียก generate_image อีกครั้งด้วย task_id={task_id} "
+                                "เพื่อรับรูป (ไม่เสียเครดิตซ้ำ); ลิงก์ผลลัพธ์ของ Runway หมดอายุภายในไม่กี่ชั่วโมง"),
+                }
+            sleep(POLL_SECONDS)
+        outputs = task.get("output") or []
+        if not outputs:
+            raise RuntimeError("Runway finished without an output image")
+        data = _download(http, str(outputs[0]))
+    except RuntimeError as exc:
+        raise RuntimeError(_redact(str(exc), key)) from None
+
+    from PIL import Image
+
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            im.verify()
+        with Image.open(io.BytesIO(data)) as im:
+            fmt, width, height = (im.format or "PNG").upper(), im.width, im.height
+    except Exception as exc:
+        raise RuntimeError(f"Runway output is not a valid image: {type(exc).__name__}") from None
+    ext = {"JPEG": "jpg", "PNG": "png", "WEBP": "webp"}.get(fmt, "png")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    name = str(output_name or "").strip()
+    if name.lower().endswith(("." + ext, ".png", ".jpg", ".jpeg", ".webp")):
+        name = name.rsplit(".", 1)[0]
+    target = DB._reserve(out_dir / f"{DB._safe_name(name, 'runway-' + time.strftime('%Y%m%d-%H%M%S'))[:100]}.{ext}")
+    try:
+        target.write_bytes(data)
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    telegram = DB._telegram_copy(target)
+    return {
+        "status": "created",
+        "path": str(target),
+        "format": ext,
+        "width": width,
+        "height": height,
+        "bytes": len(data),
+        "model": MODEL,
+        "ratio": f"{width}:{height}" if resumed else size,
+        "quality": None if resumed else quality,
+        "task_id": task_id,
+        "resumed": resumed,
+        "credits_estimate": 0 if resumed else CREDITS[quality],
+        "used_reference_image": bool(reference),
+        "seconds": round(time.monotonic() - started, 2),
+        "telegram_attachment": str(telegram) if telegram else None,
+        "media": [f"MEDIA:{telegram}"] if telegram else [],
+        "delivery": "Tell the user the path. On Telegram, end the reply with a line of its own: MEDIA:<telegram_attachment>",
+        "privacy": "The prompt (and reference image) were sent to Runway's cloud; credits were spent on the owner's Runway API account.",
+    }

@@ -1,0 +1,105 @@
+# Codex-Qwen bridge - config for the bridge's own CODEX_HOME ({{ROOT}}\data\codex-home).
+# Invoke-QwenCodex.ps1 writes config.toml from this template before every run ({{ROOT}} is
+# replaced), so edit this file, not the generated one. C:\Users\EGAT\.codex is never used.
+#
+# Verified against codex-cli 0.146 (2026-09-30), offline:
+#  - Every top-level key must stay ABOVE the first [table]. A key written after a table
+#    header belongs to that table, and 0.146 then ignores it without any warning.
+#  - The model catalog below is the only list Codex sees: the qwen entries, nothing else.
+#  - No --oss anywhere: that path can pull models from the internet.
+
+model = "qwen3-coder:30b"
+model_provider = "ollama_local"
+model_catalog_json = '{{ROOT}}\data\codex-home\qwen-models.json'
+model_context_window = 32768
+model_auto_compact_token_limit = 24000
+
+# Unattended jobs: nobody is there to answer an approval prompt. The job mode is passed
+# on the command line every run (-s read-only by default, see Invoke-QwenCodex.ps1).
+approval_policy = "never"
+sandbox_mode = "read-only"
+
+check_for_update_on_startup = false
+# Tokens, if any ever exist here, stay in files inside this CODEX_HOME - never in
+# Windows Credential Manager (the owner's rule: credential stores are off-limits).
+cli_auth_credentials_store = "file"
+mcp_oauth_credentials_store = "file"
+
+# Prompt trims: each block below is text the CPU model would otherwise read every turn.
+project_doc_max_bytes = 16384
+include_apps_instructions = false
+include_collaboration_mode_instructions = false
+include_permissions_instructions = false
+web_search = "disabled"
+
+[model_providers.ollama_local]
+name = "Ollama (local, CPU)"
+# Ollama itself, not the router (the router has no /v1). 127.0.0.1, not localhost:
+# NO_PROXY and the dead proxy the bridge sets must never catch this URL.
+base_url = "http://127.0.0.1:11434/v1"
+wire_api = "responses"
+requires_openai_auth = false
+# CPU-only: loading qwen3-coder and reading the first prompt takes minutes.
+stream_idle_timeout_ms = 1800000
+request_max_retries = 0
+stream_max_retries = 0
+
+[analytics]
+enabled = false
+
+[feedback]
+enabled = false
+
+[features]
+# Cloud, browser, desktop and agent features that need OpenAI services, download things,
+# or add tools and instructions a local 30B model does not need.
+apps = false
+plugins = false
+plugin_sharing = false
+remote_plugin = false
+browser_use = false
+browser_use_external = false
+browser_use_full_cdp_access = false
+in_app_browser = false
+computer_use = false
+image_generation = false
+multi_agent = false
+goals = false
+guardian_approval = false
+code_mode_host = false
+skill_mcp_dependency_install = false
+skill_search = false
+tool_suggest = false
+fast_mode = false
+remote_compaction_v2 = false
+secret_auth_storage = false
+in_app_updates = false
+enable_request_compression = false
+workspace_dependencies = false
+# Repo-provided hooks would run commands before the model does anything; a job never needs them.
+hooks = false
+memories = false
+
+[skills]
+include_instructions = false
+
+[skills.bundled]
+enabled = false
+
+[sandbox_workspace_write]
+network_access = false
+exclude_slash_tmp = true
+exclude_tmpdir_env_var = true
+
+# The Windows sandbox table is deliberately NOT set here. On 0.146 sandbox = "unelevated"
+# changes ACLs when it is first used (capability-SID allow ACEs on the writable roots,
+# deny ACEs on every Everyone-writable folder under TEMP/TMP/USERPROFILE/PUBLIC/PATH), and
+# "elevated" creates local users through an admin setup helper. Whether to allow either
+# is the owner's decision: "write_mode" in {{ROOT}}\data\codex-bridge.json picks it per run.
+# Without it, read-only jobs run only Codex's known-safe read commands (verified).
+
+[shell_environment_policy]
+inherit = "core"
+# Best effort network-off for the commands the model runs when no sandbox enforces it:
+# proxy-aware tools (pip, git, curl, python requests) hit a dead port instead of the internet.
+set = { HTTP_PROXY = "http://127.0.0.1:9", HTTPS_PROXY = "http://127.0.0.1:9", ALL_PROXY = "http://127.0.0.1:9", NO_PROXY = "127.0.0.1,localhost", PYTHONUTF8 = "1" }

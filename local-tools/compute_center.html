@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Qwen Compute Device</title>
+  <style>
+    :root{color-scheme:dark;--bg:#070a10;--panel:#101522;--panel2:#151b2a;--text:#eef2ff;--muted:#98a2ba;--line:#273149;--accent:#8b5cf6;--good:#34d399;--warn:#fbbf24;--bad:#fb7185}
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at 82% 0,#21164a 0,transparent 34%),var(--bg);color:var(--text);font:14px/1.5 Inter,"Segoe UI",sans-serif}
+    .wrap{max-width:1100px;margin:auto;padding:28px}
+    .head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:18px;flex-wrap:wrap}
+    .title{font-size:24px;font-weight:700}.subtitle{color:var(--muted)}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.wide{grid-column:1/-1}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
+    h2{margin:0 0 10px;font-size:16px}.note{color:var(--muted);font-size:13px;margin-bottom:10px}
+    .devices{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+    .dev{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:14px;cursor:pointer;transition:border-color .15s}
+    .dev:hover{border-color:var(--accent)}.dev.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+    .dev.off{opacity:.45;cursor:default}.dev .name{font-weight:600}.dev .detail,.dev .id{color:var(--muted);font-size:12px;word-break:break-all}
+    .dev .tag{display:inline-block;font-size:11px;padding:1px 8px;border-radius:99px;border:1px solid var(--line);margin-top:6px;color:var(--muted)}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}
+    button{background:var(--accent);color:#fff;border:0;border-radius:10px;padding:9px 16px;font-weight:600;cursor:pointer}
+    button.ghost{background:transparent;border:1px solid var(--line);color:var(--text)}button:disabled{opacity:.5;cursor:default}
+    select,input{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 9px}
+    .badge{display:inline-block;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:600}
+    .ok{background:#0d3b2e;color:var(--good)}.pend{background:#3b2f0d;color:var(--warn)}.bad{background:#3b0d18;color:var(--bad)}
+    .kv{display:grid;grid-template-columns:160px 1fr;gap:6px 12px}.kv div:nth-child(odd){color:var(--muted)}
+    table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line)}th{color:var(--muted);font-weight:500}
+    .msg{margin-top:10px;padding:10px 12px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);display:none}
+    .warn{color:var(--warn)}
+    @media(max-width:800px){.grid{grid-template-columns:1fr}.kv{grid-template-columns:1fr}}
+  </style>
+</head>
+<body><main class="wrap">
+  <header class="head">
+    <div><div class="title">Qwen Compute Device</div><div class="subtitle">เลือกหน่วยประมวลผลให้ LLM ในเครื่อง: อัตโนมัติ, CPU หรือ GPU ใบที่ต้องการ</div></div>
+    <button class="ghost" onclick="load(true)">ตรวจอุปกรณ์ใหม่</button>
+  </header>
+  <section class="grid">
+    <article class="card wide">
+      <h2>หน่วยประมวลผลทั้งเซิร์ฟเวอร์</h2>
+      <div class="note">คลิกเลือก 1 อย่าง (GPU เลือกได้หลายใบ) แล้วกด "ใช้ตัวที่เลือก" · อัตโนมัติ = ระบบเลือกเองตามการ์ดที่ต่ออยู่ (มี eGPU ใช้ eGPU) · การ์ดที่เคยเห็นแต่ยังไม่ได้เสียบก็เลือกไว้ล่วงหน้าได้ ระบบจะสลับให้เมื่อเสียบ</div>
+      <div id="devices" class="devices"></div>
+      <div class="row">
+        <label>ใช้เมื่อ <select id="apply"><option value="idle">Ollama ว่าง (ไม่ตัดงานที่กำลังทำ)</option><option value="now">ทันที (ตัดคำตอบที่กำลังสร้าง)</option></select></label>
+        <label>ระยะเวลา <select id="hours"><option value="">ถาวร</option><option value="1">1 ชั่วโมง</option><option value="4">4 ชั่วโมง</option><option value="8">8 ชั่วโมง</option><option value="24">24 ชั่วโมง</option></select></label>
+        <button id="applyBtn" onclick="applyChoice()">ใช้ตัวที่เลือก</button>
+      </div>
+      <div id="msg" class="msg"></div>
+    </article>
+    <article class="card">
+      <h2>สถานะ</h2>
+      <div id="status" class="kv"></div>
+    </article>
+    <article class="card">
+      <h2>โมเดลที่โหลดอยู่</h2>
+      <div id="loaded"></div>
+    </article>
+    <article class="card wide">
+      <h2>รายโมเดล: บังคับให้ใช้ CPU</h2>
+      <div class="note">ใช้กับทุกช่องทาง (WebUI, RAG, Telegram, Video Studio) · เหมาะกับโมเดล embedding เมื่อมี eGPU ใหญ่ จะได้ไม่ไล่โมเดลหลักออกจาก VRAM · โมเดลที่ใช้คุยบน CPU จะช้ากว่ามาก · กลับเป็น "อัตโนมัติ" ได้ทุกเมื่อ (คืนค่าเดิมแบบตรงทุกไบต์)</div>
+      <div id="models"></div>
+    </article>
+  </section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(path,options){const r=await fetch(path,options);const j=await r.json();if(!r.ok||j.ok===false)throw new Error(j.error||r.statusText);return j}
+const post=(path,body)=>api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+let state={}, picked=null, busy=false, selectable=new Set();
+function currentPick(){const k=state.choice_key||'auto';if(k==='auto')return['auto'];if(k==='cpu')return['cpu'];return k.slice(4).split(',')}
+function toggle(id){if(busy)return;if(id==='auto'||id==='cpu'){picked=[id]}else{const cur=(picked||currentPick()).filter(x=>x!=='auto'&&x!=='cpu'&&selectable.has(x));picked=cur.includes(id)?cur.filter(x=>x!==id):[...cur,id];if(!picked.length)picked=['auto']}renderDevices()}
+function renderDevices(){
+  const sel=picked||currentPick();
+  const cards=[{id:'auto',name:'อัตโนมัติ',detail:'ให้ระบบเลือกตาม eGPU ที่ต่ออยู่',tag:'แนะนำ'}];
+  for(const d of state.devices||[]){
+    if(d.kind==='cpu')cards.push({id:'cpu',name:d.name,detail:d.detail,tag:'CPU'});
+    else if(d.kind==='gpu')cards.push({id:d.id,name:d.name,detail:d.detail,tag:'GPU',note:d.note,uuid:d.id});
+    else if(d.kind==='absent')cards.push({id:d.id,name:d.name,detail:d.detail,tag:String(d.detail||'').startsWith('attached;')?'เสียบแล้ว รอ nvidia-smi':'ยังไม่ได้เสียบ',uuid:d.id});
+    else cards.push({id:null,name:d.name,detail:d.detail,tag:'ใช้ไม่ได้',chosen:d.uuid&&sel.includes(d.uuid)});
+  }
+  selectable=new Set(cards.filter(c=>c.id!==null).map(c=>c.id));
+  $('devices').innerHTML=cards.map(c=>`<div class="dev ${c.id===null?'off':''} ${(c.id!==null&&sel.includes(c.id))||c.chosen?'sel':''}" ${c.id!==null?`data-id="${esc(c.id)}" onclick="toggle(this.dataset.id)"`:''}><div class="name">${esc(c.name)}</div><div class="detail">${esc(c.detail)}</div>${c.uuid?`<div class="id">${esc(c.uuid)}</div>`:''}${c.note?`<div class="detail warn">${esc(c.note)}</div>`:''}<span class="tag">${esc(c.tag)}</span></div>`).join('');
+}
+function renderStatus(){
+  const s=state;let badge;
+  if(!s.ollama_running)badge='<span class="badge bad">Ollama ไม่ได้รัน</span>';
+  else if(s.switch_pending||s.restart_pending)badge='<span class="badge pend">รอสลับเมื่อว่าง</span>';
+  else if(s.choice_fallback)badge='<span class="badge pend">การ์ดที่เลือกใช้ไม่ได้ตอนนี้ — ใช้อัตโนมัติแทน</span>';
+  else badge='<span class="badge ok">ใช้งานตามที่เลือกแล้ว</span>';
+  const rows=[['ที่เลือกไว้',esc(s.chosen)+(s.until?` <span class="warn">(ถึง ${esc(s.until.slice(0,16).replace('T',' '))} แล้วกลับเป็นอัตโนมัติ)</span>`:'')],['ที่ใช้อยู่จริง',esc(s.running_now)],['สถานะ',badge]];
+  if(s.legacy_mode&&s.choice_key==='auto')rows.push(['QWEN_GPU_MODE',`<span class="warn">ตั้งไว้เป็น ${esc(s.legacy_mode)} (มีผลเมื่อเลือกอัตโนมัติ)</span>`]);
+  if(s.record_note)rows.push(['หมายเหตุ',`<span class="warn">${esc(s.record_note)}</span>`]);
+  if((s.manual_override||[]).length)rows.push(['ถูก override',`<span class="warn">ตัวแปร User ${esc(s.manual_override.join(', '))} มีผลเหนือการเลือกนี้</span>`]);
+  $('status').innerHTML=rows.map(r=>`<div>${r[0]}</div><div>${r[1]}</div>`).join('');
+  $('loaded').innerHTML=(s.loaded_models||[]).length?'<table><thead><tr><th>โมเดล</th><th>ขนาด</th><th>อยู่ใน GPU</th></tr></thead><tbody>'+s.loaded_models.map(m=>`<tr><td>${esc(m.model)}</td><td>${m.gb} GB</td><td>${m.gpu_percent}%</td></tr>`).join('')+'</tbody></table>':'<div class="note">ไม่มีโมเดลโหลดอยู่</div>';
+  const pl=s.model_placement||{};
+  const label={cpu:'<span class="badge pend">CPU เสมอ</span>',lost:'<span class="badge bad">ถูกล้าง (โหลดโมเดลใหม่)</span>',pending:'<span class="badge bad">ค้างกลางทาง</span>'};
+  const btn=(m,p,text)=>`<button class="ghost" ${busy?'disabled':''} data-model="${esc(m)}" data-placement="${p}" onclick="setPlacement(this.dataset.model,this.dataset.placement)">${text}</button>`;
+  $('models').innerHTML='<table><thead><tr><th>โมเดล</th><th>ตอนนี้</th><th></th></tr></thead><tbody>'+(s.installed_models||[]).map(m=>{const p=pl[m];const actions=p==='cpu'?btn(m,'auto','กลับเป็นอัตโนมัติ'):p==='lost'?btn(m,'cpu','ตั้ง CPU อีกครั้ง')+' '+btn(m,'auto','ล้างสถานะ'):p==='pending'?btn(m,'auto','คืนค่าเดิม'):btn(m,'cpu','ให้ใช้ CPU');return `<tr><td>${esc(m)}</td><td>${label[p]||'อัตโนมัติ'}</td><td>${actions}</td></tr>`}).join('')+'</tbody></table>';
+}
+function show(text,isErr){$('msg').style.display='block';$('msg').innerHTML=(isErr?'<span class="warn">':'<span>')+esc(text)+'</span>'}
+async function applyChoice(){
+  const sel=picked||currentPick();if(busy)return;busy=true;$('applyBtn').disabled=true;show('กำลังบันทึก...');
+  try{const r=await post('/compute/api/select',{device:sel.join(','),apply:$('apply').value,hours:$('hours').value||null});show((r.message||'')+(r.warning?' '+r.warning:''),r.status==='error'||r.status==='saved_but_overridden');picked=null;await load()}
+  catch(e){show('ผิดพลาด: '+e.message,true)}finally{busy=false;$('applyBtn').disabled=false}
+}
+async function setPlacement(model,placement){
+  if(busy)return;busy=true;renderStatus();show(`กำลังตั้ง ${model} → ${placement==='cpu'?'CPU':'อัตโนมัติ'} ...`);
+  try{const r=await post('/compute/api/placement',{model,placement});show((r.message||'')+((r.warnings||[]).length?' · '+r.warnings.join(' · '):''),r.status==='error');await load()}
+  catch(e){show('ผิดพลาด: '+e.message,true)}finally{busy=false;renderStatus()}
+}
+async function load(refresh){try{state=await api('/compute/api/state'+(refresh?'?devices=1':''));renderDevices();renderStatus()}catch(e){show('โหลดสถานะไม่ได้: '+e.message,true)}}
+load(false);setInterval(()=>{if(!busy)load(false)},10000);
+</script>
+</body>
+</html>

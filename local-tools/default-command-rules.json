@@ -1,0 +1,45 @@
+{
+  "_comment": "User-editable command-policy rules for the local-tools gateway. Copied once to E:\\localllm\\data\\permission-center\\command-rules.json by start-local-tools.ps1; edit that copy (it is re-read when its mtime changes). Patterns are Python regexes and should carry their own (?i). The built-in credential-store / disk-destruction / service-stop rules always run in addition to these, so removing an entry here cannot re-open those. Reasons are shown to the user in Thai. Save as UTF-8 (with or without a BOM; UTF-16 from Out-File is read too), and double every regex backslash in JSON (\\\\s, not \\s). If the file cannot be parsed, the last rules that did parse (or these defaults) stay in force and a 'rules_error' row is written to audit.jsonl.",
+  "forbidden": [
+    {
+      "pattern": "(?i)(?:^|\\s)remove-item\\b[^\\n]*?(?:^|\\s)-r(?:ecurse|ecurs|ecur|ecu|ec|e)?(?=\\s|$)",
+      "reason": "ลบโฟลเดอร์แบบซ้อน (Remove-Item -Recurse)"
+    },
+    {
+      "pattern": "(?i)(?:^|\\s)(?:rd|rmdir|del|erase)(?=[\\s/]|$)[^\\n]*?[/-]s(?=[\\s/]|$)",
+      "reason": "ลบทั้งไดเรกทอรีแบบซ้อน (rd/rmdir/del /s)"
+    },
+    {
+      "pattern": "(?i)\\bclear-recyclebin\\b",
+      "reason": "ล้างถังรีไซเคิล (Clear-RecycleBin)"
+    },
+    {
+      "pattern": "(?i)(?:stop-process|taskkill)\\b[^\\n]*\\b(?:ollama|open-webui|openwebui|python|pythonw|node|openclaw|cloudflared|llama-server)\\b",
+      "reason": "หยุดโปรเซสของบริการ AI ในเครื่อง"
+    },
+    {
+      "pattern": "(?i)\\bgit\\b[^\\n]*\\bclean\\b(?=[^\\n]*-\\w*f)(?=[^\\n]*-\\w*[dx])",
+      "reason": "ลบไฟล์ที่ไม่ได้ track ทั้งหมด (git clean -fdx)"
+    },
+    {
+      "pattern": "(?i)\\bgit\\b[^\\n]*\\breset\\b[^\\n]*--hard\\b",
+      "reason": "ย้อน Git แบบทำลายการแก้ไข (git reset --hard)"
+    },
+    {
+      "pattern": "(?i)\\bshutil\\s*\\.\\s*rmtree\\b|\\brmtree\\s*\\(",
+      "reason": "ลบทรีไดเรกทอรีด้วย Python (shutil.rmtree)"
+    },
+    {
+      "pattern": "(?i)\\breg\\b\\s+delete\\b|(?:^|\\s)remove-item\\b[^\\n]*\\b(?:hklm|hkcu|hkcr|hkcc|hku):|\\bremove-itemproperty\\b",
+      "reason": "ลบรีจิสทรี (reg delete)"
+    },
+    {
+      "pattern": "(?i)\\b(?:takeown|icacls)\\b[^\\n]*c:[\\\\/]+windows\\b",
+      "reason": "เปลี่ยนเจ้าของ/สิทธิ์ไฟล์ระบบ (takeown/icacls C:\\Windows)"
+    },
+    {
+      "pattern": "(?i)\\bcipher\\b[^\\n]*/w",
+      "reason": "ล้างพื้นที่ว่างบนดิสก์ (cipher /w)"
+    }
+  ]
+}

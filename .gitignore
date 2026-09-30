@@ -1,0 +1,68 @@
+# Qwen Suite - local-only git snapshot of the suite's OWN source (no remote, never push).
+# Allowlist: everything at the top level is ignored, then the suite's source is re-included.
+# Data, secrets, logs, caches, runtimes, models, third-party installers and binaries stay out.
+# (Comments must be on their own line: text after a pattern would become part of it.)
+
+/*
+!/.gitignore
+!/.gitattributes
+!/GIT-README.txt
+!/README.md
+!/*.ps1
+!/Configure-*.py
+!/ai-services/
+!/internet-gateway/
+!/local-tools/
+!/openclaw-tools/
+!/theme/
+
+# ---- never tracked (most are already outside the allowlist; listed to document intent) ----
+# openclaw-workspace has its OWN git repo (E:\localllm\openclaw-workspace\.git) and holds
+# personal memory\ and outputs\ - it is not nested or duplicated here.
+/openclaw-workspace/
+openclaw-workspace/memory/
+openclaw-workspace/outputs/
+/webui-venv/
+/openclaw-runtime/
+/openclaw-install/
+/runtime/
+/model-cache/
+/hf-cache/
+/pip-cache/
+/webui-data/
+/data/
+/logs/
+/backups/
+/disabled-startup/
+/ocr/
+/test-artifacts/
+/.webui_secret_key
+
+# data and secrets inside tracked folders
+internet-gateway/data/
+local-tools/allowed-roots.json
+.env
+*.pem
+*.key
+auth.json
+credentials*
+
+# generated / binary / archives
+__pycache__/
+*.pyc
+*.pyo
+node_modules/
+*.db*
+*.sqlite*
+*.log
+*.log.*
+*.jsonl
+*.7z
+*.zip
+*.exe
+*.dll
+*.lnk
+*.ico
+*.stackdump
+*.tmp
+*.bak
