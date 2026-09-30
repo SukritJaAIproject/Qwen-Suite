@@ -120,6 +120,10 @@ def check_folder(cwd: Any, base: Path | None = None) -> Path:
     if not given.is_absolute():
         raise ValueError(f"โฟลเดอร์งานต้องเป็น path เต็ม: {raw}")
     folder = given.resolve(strict=True)  # FileNotFoundError when missing
+    # \\?\ device paths and UNC shares (\\localhost\E$) would slip past the folder rules below
+    for candidate in (given, folder):
+        if not re.fullmatch(r"[A-Za-z]:", candidate.drive or ""):
+            raise ValueError(f"โฟลเดอร์งานต้องอยู่บนไดรฟ์ในเครื่อง เช่น E:\\... (ไม่รับ UNC หรือ \\\\?\\): {candidate}")
     if not folder.is_dir():
         raise ValueError(f"ไม่ใช่โฟลเดอร์: {folder}")
     for candidate in {given, folder}:
@@ -142,6 +146,9 @@ def check_folder(cwd: Any, base: Path | None = None) -> Path:
 def new_job_id() -> str:
     """Same shape as the bridge's New-JobId (yyyyMMdd-HHmmss-xxxx)."""
     return datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(2)
+
+
+LAUNCH_CHECK_SECONDS = 12
 
 
 def _spawn_detached(argv: list[str], log_path: Path, env: dict[str, str], cwd: Path) -> int:
@@ -245,6 +252,29 @@ def start_codex_job(prompt: str, project: str = "", cwd: str = "", mode: str = "
         raise RuntimeError(f"เริ่ม Qwen Codex ไม่ได้: {type(exc).__name__}: {exc}") from None
     record["launcher_pid"] = pid
     record_path.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    # A launcher that fails at once (codex.exe missing after an app update, bad settings) writes
+    # no job row and sends no notification; wait briefly so the chat hears about it now.
+    proc = next((p for p in _LAUNCHED if p.pid == pid), None) if isinstance(pid, int) else None
+    if proc is not None:
+        deadline = time.monotonic() + LAUNCH_CHECK_SECONDS
+        while time.monotonic() < deadline and proc.poll() is None:
+            time.sleep(0.5)
+        code = proc.poll()
+        if code not in (None, 0):
+            try:
+                tail = launch_log.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-3:]
+            except OSError:
+                tail = []
+            record["failed_to_start"] = {"exit_code": code, "log_tail": tail}
+            record_path.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
+            return {
+                "status": "failed_to_start",
+                "job_id": job_id,
+                "exit_code": code,
+                "message_th": f"เริ่มงาน Qwen Codex ไม่สำเร็จ (exit {code}): " + " / ".join(tail)[-400:],
+                "next_action": "Tell the user the job did not start and why; do not retry unchanged.",
+            }
 
     idle_minutes = int(settings.get("idle_wait_minutes") or 60)
     recent = int(settings.get("recent_activity_minutes") or 15)

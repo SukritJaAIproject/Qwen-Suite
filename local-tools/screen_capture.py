@@ -139,7 +139,25 @@ def _scale(image, max_width: int):
     return image.resize((max_width, height), Image.LANCZOS)
 
 
-def capture(out_dir: Path, monitor: Any = "all", region: Any = "", output_name: str = "") -> dict[str, Any]:
+TELEGRAM_COPY_DAYS = 7
+
+
+def _prune_telegram_copies() -> None:
+    """Screenshots copied for Telegram are only needed until the bot has sent them."""
+    folder = getattr(DB, "TELEGRAM_OUTPUTS", None)
+    if not folder or not Path(folder).is_dir():
+        return
+    cutoff = time.time() - TELEGRAM_COPY_DAYS * 86400
+    for old in Path(folder).glob("screen-*.png"):
+        try:
+            if old.stat().st_mtime < cutoff:
+                old.unlink()
+        except OSError:
+            pass
+
+
+def capture(out_dir: Path, monitor: Any = "all", region: Any = "", output_name: str = "",
+            telegram_copy: bool = True) -> dict[str, Any]:
     started = time.monotonic()
     monitors = list_monitors()
     chosen = _pick_monitor(monitor, monitors)
@@ -176,7 +194,10 @@ def capture(out_dir: Path, monitor: Any = "all", region: Any = "", output_name: 
     except BaseException:
         target.unlink(missing_ok=True)  # only our own reserved placeholder
         raise
-    telegram = DB._telegram_copy(target)
+    telegram = None
+    if telegram_copy:
+        _prune_telegram_copies()
+        telegram = DB._telegram_copy(target)
     result: dict[str, Any] = {
         "status": "captured",
         "path": str(target),

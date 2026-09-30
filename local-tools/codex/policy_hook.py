@@ -56,17 +56,28 @@ BRIDGE_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(?i)command_policy|policy_hook|command-rules\.json|permission[-_]center|permission_manager"
                 r"|codex-bridge\.json|qwen-bridge\.rules|config\.template\.toml|[\\/]local-tools[\\/]+codex\b"),
      "ห้ามแก้หรืออ่านไฟล์ระบบความปลอดภัยของ Qwen Suite (นโยบายคำสั่ง/การตั้งค่า bridge)"),
+    # Code that Python would import ahead of the policy (defence in depth next to python -I -S).
+    (re.compile(r"(?i)site-packages|\.pth|sitecustomize|usercustomize|[\/]local-tools[\/]+[^\/\s\"'`]+\.py"),
+     "ห้ามแก้ไฟล์ Python ของ Qwen Suite หรือ site-packages (อาจปิดระบบตรวจคำสั่ง)"),
     (re.compile(r"(?i)(?<![\w.-])\.(?:ssh|aws|azure|gnupg|kube)(?![\w-])|[\\/](?:login data|web data)(?=$|[\\/\s\"'`),;:])"),
      "เข้าถึงโฟลเดอร์ข้อมูลลับ (.ssh/.aws/ข้อมูลล็อกอินของเบราว์เซอร์)"),
 ]
 
 
 def _load_policy():
-    if str(TOOLS_DIR) not in sys.path:
-        sys.path.insert(0, str(TOOLS_DIR))
-    import command_policy  # noqa: WPS433 - imported lazily so an import error becomes a deny
+    # Loaded by file path, never by putting local-tools on sys.path: a job could otherwise drop a
+    # base64.py / threading.py there and replace the stdlib modules command_policy imports, and
+    # a hook that "succeeds" with no output lets every command run. The hook itself is started
+    # with python -I -S (no script dir, no site-packages, no .pth) for the same reason.
+    import importlib.util
 
-    return command_policy
+    module = sys.modules.get("command_policy")
+    if module is None:
+        spec = importlib.util.spec_from_file_location("command_policy", TOOLS_DIR / "command_policy.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["command_policy"] = module
+        spec.loader.exec_module(module)
+    return module
 
 
 def _strings(value: Any, out: list[str], budget: list[int]) -> None:

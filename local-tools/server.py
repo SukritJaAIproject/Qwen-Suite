@@ -2525,7 +2525,10 @@ def capture_screen(project: str = "General", monitor: str | int = "all", region:
     import screen_capture
 
     project_dir, manifest = PROJECTS.resolve_project(project)
-    result = screen_capture.capture(project_dir / "outputs", monitor=monitor, region=region, output_name=output_name)
+    # Only a Telegram request needs the copy in the OpenClaw workspace (the bot attaches from there).
+    telegram_copy = (_GATEWAY_SOURCE.get() or "") == "openclaw"
+    result = screen_capture.capture(project_dir / "outputs", monitor=monitor, region=region,
+                                    output_name=output_name, telegram_copy=telegram_copy)
     result["project"] = manifest["slug"]
     return _json(result)
 

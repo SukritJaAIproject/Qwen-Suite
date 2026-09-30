@@ -276,7 +276,8 @@ function Get-PolicyHookCommand {
     $python = Resolve-Python
     if (-not $python -or -not (Test-Path -LiteralPath $PolicyHookScript -PathType Leaf)) { return '' }
     foreach ($p in @($python, $PolicyHookScript)) { if ($p -match '[\s"''&|<>^%!]') { return '' } }
-    return ('{0} -X utf8 {1}' -f $python, $PolicyHookScript)
+    # -I -S: no script dir, user site, site-packages or .pth - nothing a job wrote can load before the policy
+    return ('{0} -I -S -X utf8 {1}' -f $python, $PolicyHookScript)
 }
 
 function Get-PolicyTrust {
@@ -314,6 +315,15 @@ function Initialize-CodexHome([string[]]$UntrustedDirs = @()) {
         if (-not (Test-Path -LiteralPath $template)) { Stop-Bridge 2 "ไม่พบไฟล์แม่แบบ $template" }
         $text = [System.IO.File]::ReadAllText($template, $Utf8).Replace('{{ROOT}}', $Root)
         if ($p.Name -eq 'config') {
+            if (-not $projectsText -and (Test-Path -LiteralPath $p.Target)) {
+                # A launch or -Check that has no job folders must not drop the untrusted entry a
+                # starting job just wrote (without it a repo's .codex\config.toml could load and
+                # turn hooks off). Only "untrusted" entries are carried over, never trusted ones.
+                $existing = [System.IO.File]::ReadAllText($p.Target, $Utf8)
+                foreach ($m in [regex]::Matches($existing, '(?m)^\[projects\.(?<k>[^\r\n]+)\]\r?\ntrust_level = "untrusted"\r?$')) {
+                    $projectsText += "`n[projects.{0}]`ntrust_level = `"untrusted`"`n" -f $m.Groups['k'].Value
+                }
+            }
             # The trust placeholder is a comment line, so the template itself stays valid TOML.
             $text = [regex]::Replace($text, '(?m)^# \{\{POLICY_HOOK_TRUST\}\}.*$', $trustText.Replace('$', '$$'))
             $text = $text.Replace('{{POLICY_HOOK_COMMAND}}', $hookCommand) + $projectsText

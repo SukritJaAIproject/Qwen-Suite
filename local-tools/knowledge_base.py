@@ -62,7 +62,8 @@ from typing import Any, Callable, Iterator
 # <install root>\data\knowledge (this file is <install root>\local-tools\knowledge_base.py)
 KNOWLEDGE_ROOT = Path(os.environ.get("QWEN_KNOWLEDGE_ROOT") or Path(__file__).resolve().parent.parent / "data" / "knowledge")
 OCR_CACHE_DIRNAME = "_ocr-cache"
-EXTRACTOR_VERSION = 1  # bump when extraction/chunking changes: forces re-extraction of every file
+EXTRACTOR_VERSION = 2  # bump when extraction/chunking changes: forces re-extraction of every file
+# 2 (2026-09-30): prefixed secret names (bot_token, DB_PASSWORD...) and token shapes are redacted
 INDEX_VERSION = 1
 
 TEXT_EXTENSIONS = {".md", ".txt", ".py", ".csv", ".json", ".xml", ".ini", ".cfg", ".log", ".js", ".ps1", ".yaml", ".yml"}
@@ -116,10 +117,23 @@ _CAMEL_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 _TAG_RE = re.compile(r"([A-Za-z]{1,4})([0-9]+)[A-Za-z]")
 _STOPWORDS = {"the", "a", "an", "of", "and", "or", "to", "in", "on", "for", "with", "is", "are", "what",
               "how", "which", "where", "does", "do", "vs", "about", "from", "by", "at", "it", "this", "that"}
+# The secret word may sit anywhere in the name: bot_token, TELEGRAM_TOKEN, DB_PASSWORD, wifi_password,
+# mqtt_pass, ChargePointPassword, AuthorizationKey, chat_id (a found review leaked all of these).
 _SECRET_RE = re.compile(
-    r"(?i)\b(password|passwd|pwd|pass_?word|secret|client_secret|token|access_token|api[_-]?key|apikey|"
-    r"auth[_-]?key|access[_-]?key|private[_-]?key|รหัสผ่าน)\b(\s*[\"']?\s*[=:]\s*)([\"']?)([^\s\"',;)}\]]{3,})"
+    r"(?i)\b([A-Za-z0-9_.-]*?(?:password|passwd|pwd|pass|secret|token|api[_-]?key|apikey|auth(?:orization)?[_-]?key|"
+    r"access[_-]?key|private[_-]?key|chat[_-]?id)[A-Za-z0-9_.-]*|รหัสผ่าน)(\s*[\"']?\s*[=:]\s*)([\"']?)([^\s\"',;)}\]]{3,})"
 )
+# Secrets recognisable by shape alone, wherever they appear.
+_TOKEN_SHAPE_RE = re.compile(
+    r"(?<![0-9])\d{8,10}:[A-Za-z0-9_-]{30,}"  # Telegram bot token (also inside .../bot<token>/...)
+    r"|\bsk-[A-Za-z0-9_-]{16,}"               # OpenAI-style keys
+    r"|\bgh[pousr]_[A-Za-z0-9]{30,}"          # GitHub tokens
+    r"|\bxox[abposr]-[A-Za-z0-9-]{10,}"       # Slack tokens
+    r"|\bAKIA[0-9A-Z]{16}\b"                 # AWS access key id
+    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+)
+# Config files named after a secret hold only its value (OCPP AuthorizationKey_cfg.txt).
+_SECRET_FILE_RE = re.compile(r"(?i)(password|passwd|secret|token|authorization_?key|private_?key|api_?key)")
 _BASIC_AUTH_RE = re.compile(r"(?i)\b(basic|bearer)\s+[A-Za-z0-9+/=._-]{12,}")
 _URL_USERINFO_RE = re.compile(r"(://[^/\s:@]+):[^/\s@]+@")
 _ROW_TAG_RE = re.compile(r"^\[(r\d+|table \d+ row \d+)\]\s*")
@@ -172,6 +186,7 @@ def _write_json(path: Path, value: Any) -> None:
 
 
 def redact(text: str) -> str:
+    text = _TOKEN_SHAPE_RE.sub(REDACTED, text)
     text = _SECRET_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}{REDACTED}", text)
     text = _BASIC_AUTH_RE.sub(lambda m: f"{m.group(1)} {REDACTED}", text)
     return _URL_USERINFO_RE.sub(lambda m: f"{m.group(1)}:{REDACTED}@", text)
@@ -838,6 +853,9 @@ def extract_file(path: Path, source: dict[str, Any], cache_dir: Path) -> tuple[l
         units = _extract_csv(path)
     else:
         units = _extract_text_file(path)
+    if suffix in TEXT_EXTENSIONS and _SECRET_FILE_RE.search(path.stem):
+        # the whole file is the secret's value: keep the name searchable, never the content
+        units = [{**unit, "text": REDACTED} for unit in units]
     methods = sorted({str(unit.get("method")) for unit in units})
     info["method"] = "+".join(methods) if methods else "empty"
     return units, info
@@ -1383,6 +1401,7 @@ def search(
             continue
         per_file[path] += 1
         snippet, tag = _snippet(hit["text"], units)
+        snippet = redact(snippet)  # indexes built by an older extractor must not leak either
         locator = _refine_locator(hit["locator"] or "", tag)
         result: dict[str, Any] = {"n": len(results) + 1, "citation": f"{hit['name']} · {locator}", "snippet": snippet}
         if several:

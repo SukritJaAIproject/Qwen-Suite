@@ -227,7 +227,7 @@ def validate_output(schema_path: str | Path, text: str) -> dict[str, Any]:
 CHAT_SOURCES = {"openclaw", "webui", "mcp", "web"}
 
 
-def notify(tools_dir: str | Path, title: str, status: str, minutes: float, dry_run: bool = False,
+def notify(tools_dir: str | Path, title: str, status: str, minutes: float | None, dry_run: bool = False,
            source: str = "", job_id: str = "") -> dict[str, Any]:
     """Hand the result to local-tools\\notifier.py when it is installed. Only the title and
     status leave the machine - never prompts, file contents or paths.
@@ -544,9 +544,9 @@ def list_jobs(root: str | Path | None = None, job_id: str = "", limit: int = 10)
         denials = blocked_commands(job.get("run_dir"))
         if denials:
             job["blocked_commands"] = denials
-            if isinstance(job.get("schema_check"), dict) and job["schema_check"].get("error"):
-                # jsonschema quotes the offending value, which is model output
-                job["schema_check"] = {**job["schema_check"], "error": _safe_answer(job["schema_check"]["error"], 600, hidden)}
+        if isinstance(job.get("schema_check"), dict) and job["schema_check"].get("error"):
+            # jsonschema quotes the offending value, which is model output
+            job["schema_check"] = {**job["schema_check"], "error": _safe_answer(job["schema_check"]["error"], 600, hidden)}
         job["final_message"] = _safe_answer(job.get("final_message"), FINAL_CHARS_DETAIL, hidden)
         if job.get("error"):
             job["error"] = _safe_error(job["error"], hidden, job.get("exit_code"))
@@ -599,7 +599,9 @@ def _main(argv: list[str]) -> int:
             out = validate_output(args[0], Path(args[1]).read_text(encoding="utf-8-sig"))
         elif cmd == "notify":
             spec = json.loads(Path(args[0]).read_text(encoding="utf-8-sig"))
-            out = notify(spec["tools_dir"], spec["title"], spec["status"], float(spec.get("minutes") or 0),
+            failed = str(spec.get("status") or "").casefold() not in {"completed", "ok", "success", "succeeded", "done"}
+            minutes = None if failed and spec.get("source") else float(spec.get("minutes") or 0)
+            out = notify(spec["tools_dir"], spec["title"], spec["status"], minutes,
                          bool(spec.get("dry_run")), str(spec.get("source") or ""), str(spec.get("job_id") or ""))
         elif cmd == "hooks":
             # hooks CODEX_EXE CODEX_HOME CWD

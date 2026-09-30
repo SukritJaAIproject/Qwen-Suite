@@ -49,7 +49,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Credential stores stay off-limits to automation (the owner's standing rule).
 _CREDENTIAL_RULE = (
-    r"(?i)\b(cmdkey|vaultcmd|keymgr)\b|get-storedcredential|credentialmanager|cryptunprotectdata|protecteddata\]::unprotect|[\\/]microsoft[\\/]+(protect|credentials|vault)\b|login data|\.openclaw[\\/]+credentials\b|[\\/]data[\\/]+credentials\b|\bkeyring\b|passwordvault",
+    r"(?i)\b(cmdkey|vaultcmd|keymgr)\b|get-storedcredential|credentialmanager|cryptunprotectdata|protecteddata\]::unprotect|[\\/]microsoft[\\/]+(protect|credentials|vault)\b|login data|\.openclaw[\\/]+credentials\b|[\\/]data[\\/]+credentials\b|(^|[\s\"'`;&|(])credentials[\\/]|runway-api-key|\bkeyring\b|passwordvault",
     "เข้าถึงที่เก็บรหัสผ่าน/ข้อมูลลับ",
 )
 # Disk and backup destruction.
