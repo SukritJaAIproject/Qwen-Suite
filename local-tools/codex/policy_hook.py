@@ -57,7 +57,7 @@ BRIDGE_RULES: list[tuple[re.Pattern[str], str]] = [
                 r"|codex-bridge\.json|qwen-bridge\.rules|config\.template\.toml|[\\/]local-tools[\\/]+codex\b"),
      "ห้ามแก้หรืออ่านไฟล์ระบบความปลอดภัยของ Qwen Suite (นโยบายคำสั่ง/การตั้งค่า bridge)"),
     # Code that Python would import ahead of the policy (defence in depth next to python -I -S).
-    (re.compile(r"(?i)site-packages|\.pth|sitecustomize|usercustomize|[\/]local-tools[\/]+[^\/\s\"'`]+\.py"),
+    (re.compile(r"(?i)site-packages|\.pth\b|sitecustomize|usercustomize|[\\/]local-tools[\\/]+[^\\/\s\"'`]+\.py\b"),
      "ห้ามแก้ไฟล์ Python ของ Qwen Suite หรือ site-packages (อาจปิดระบบตรวจคำสั่ง)"),
     (re.compile(r"(?i)(?<![\w.-])\.(?:ssh|aws|azure|gnupg|kube)(?![\w-])|[\\/](?:login data|web data)(?=$|[\\/\s\"'`),;:])"),
      "เข้าถึงโฟลเดอร์ข้อมูลลับ (.ssh/.aws/ข้อมูลล็อกอินของเบราว์เซอร์)"),
