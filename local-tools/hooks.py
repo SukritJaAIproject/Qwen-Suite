@@ -1,4 +1,4 @@
-"""Owner-authored lifecycle hooks for the local-tools gateway (block-only, fail-open).
+r"""Owner-authored lifecycle hooks for the local-tools gateway (block-only, fail-open).
 
 gateway_dispatch already funnels every local action through one choke point with the
 Permission Center and audit.jsonl. This adds the one thing Codex has that the suite did not:

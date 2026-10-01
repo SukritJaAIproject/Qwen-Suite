@@ -79,7 +79,7 @@ CATALOG = {
         "list_codex_jobs": "read | job_id?, limit?; recent Qwen Codex jobs (desktop and chat): status, minutes, start of the answer",
     },
     "knowledge": {
-        "search_knowledge": "read | query, collection? (B781001|OCPP|comma list; empty = all), limit? (<=10, default 5), project?; keyword search in Thai/English over the owner's document sets, no model; hits: citation 'file · page/sheet row/lines', snippet, open {project, path_alias, relative_path, page} for inspect_project_document/pdf_render_page; cite [n]; ocr=true = text read from a drawing image",
+        "search_knowledge": "read | query, collection? (name|comma list; empty = all; see list_knowledge), limit? (<=10, default 5), project?; keyword search in Thai/English over the owner's document sets, no model; hits: citation 'file · page/sheet row/lines', snippet, open {project, path_alias, relative_path, page} for inspect_project_document/pdf_render_page; cite [n]; ocr=true = text read from a drawing image",
         "list_knowledge": "read | collection?; collections with contents, file/chunk counts, build time, files changed since build (refresh: run_project_action name=reindex)",
     },
     "outlook": {

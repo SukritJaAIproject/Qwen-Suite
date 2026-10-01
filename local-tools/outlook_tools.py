@@ -12,9 +12,8 @@ Connecting:
 - Outlook already running -> attach (GetActiveObject); works whatever profile the owner opened.
 - Not running -> start it through COM (no window) only when ALLOW_START and a read-only registry
   preflight finds nothing that would stop it at a dialog: no default profile, "prompt for a profile",
-  or a .pst in the default profile that no longer exists. Found 2026-09-30 on this machine: the
-  default profile's only store is a .pst in the orphaned "OneDrive - Chulalongkorn University"
-  folder, so a COM start sits forever on "Outlook Data File ... is not valid". The preflight reads
+  or a .pst in the default profile that no longer exists (a profile whose only store is a .pst in a
+  removed sync folder makes a COM start sit forever on "Outlook Data File ... is not valid"). The preflight reads
   only key names and the PST-path values (001f6700/001e6700) - no other value in the profile keys.
 
 Dates: Items.Restrict parses date strings with the user's regional settings (here th-TH with the

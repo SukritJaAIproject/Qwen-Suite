@@ -1548,6 +1548,16 @@ def main(argv: list[str] | None = None) -> int:
     find.add_argument("query")
     find.add_argument("-c", "--collection", default="")
     find.add_argument("-n", "--limit", type=int, default=5)
+    make = sub.add_parser("create", help="create (or re-point) a collection from folders, then build it")
+    make.add_argument("name")
+    make.add_argument("--source", action="append", required=True, metavar="DIR",
+                      help="folder to index (read-only; repeatable)")
+    make.add_argument("--include", action="append", default=[], metavar="GLOB",
+                      help="file name globs to index (default: every supported type)")
+    make.add_argument("--title", default="")
+    make.add_argument("--description", default="")
+    make.add_argument("--project", default="", help="Qwen project the collection belongs to")
+    make.add_argument("--ocr", action="store_true", help="OCR pages that have no text layer (slow)")
     show = sub.add_parser("list", help="list collections")
     show.add_argument("name", nargs="?", default="")
     options = parser.parse_args(argv)
@@ -1557,6 +1567,20 @@ def main(argv: list[str] | None = None) -> int:
         _lower_priority()
         result = build_collection(options.name, None, root=root, force=options.force,
                                   log=None if options.quiet else print)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if not result.get("errors") else 2
+    if options.command == "create":
+        _lower_priority()
+        sources = []
+        for index, folder in enumerate(options.source, 1):
+            source: dict[str, Any] = {"alias": f"source{index}", "root": str(Path(folder).resolve()),
+                                      "recursive": True, "ocr": bool(options.ocr)}
+            if options.include:
+                source["include"] = list(options.include)
+            sources.append(source)
+        result = build_collection(options.name, sources, title=options.title or None,
+                                  description=options.description or None, project=options.project or None,
+                                  root=root, log=print)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if not result.get("errors") else 2
     if options.command == "search":
