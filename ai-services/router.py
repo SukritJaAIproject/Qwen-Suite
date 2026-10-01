@@ -25,31 +25,48 @@ GPU_PROFILE_PATH = Path(
     os.environ.get("QWEN_GPU_PROFILE", str(Path(__file__).resolve().parents[1] / "data" / "gpu-profile.json"))
 )
 
+GENERAL_MODEL = "qwen3.8:27b"
+CODE_MODEL = "qwen3-coder:30b"
+AGENT_MODEL = "muse-glimmer:30b"
+STRUCTURED_MODEL = "granite4.2:8b"
+LEGACY_REVIEW_MODEL = "gpt-oss:20b"
+LEGACY_FAST_MODEL = "qwen3:4b"
+
 PROFILES: dict[str, dict[str, str]] = {
     "qwen-auto:latest": {
         "name": "Qwen Auto Router",
         "target": "auto",
-        "description": "Automatically selects General, Code, Fast, or Review for each request.",
+        "description": "Automatically selects General, Code, Agent, Structured/RAG, or Review for each request.",
     },
     "qwen-general:latest": {
         "name": "Qwen General + Vision",
-        "target": "qwen3.8:27b",
+        "target": GENERAL_MODEL,
         "description": "Best default for professional work, Thai, tools, images, and long tasks.",
     },
     "qwen-code:latest": {
         "name": "Qwen Coding",
-        "target": "qwen3-coder:30b",
+        "target": CODE_MODEL,
         "description": "Repository work, programming, debugging, and automation.",
     },
     "qwen-fast:latest": {
-        "name": "Qwen Fast",
-        "target": "qwen3:4b",
-        "description": "Low-latency short chat, classification, and simple formatting.",
+        "name": "Qwen Fast Structured + RAG",
+        "target": STRUCTURED_MODEL,
+        "description": "Granite 4.2 8B for fast structured output, RAG answers, classification, and formatting.",
+    },
+    "qwen-structured:latest": {
+        "name": "Qwen Structured + RAG",
+        "target": STRUCTURED_MODEL,
+        "description": "Granite 4.2 8B for JSON, schemas, extraction, and retrieval-grounded answers.",
+    },
+    "qwen-agent:latest": {
+        "name": "Qwen Agent",
+        "target": AGENT_MODEL,
+        "description": "Muse Glimmer 30B for tool use, multi-step agent work, and failure recovery.",
     },
     "qwen-review:latest": {
         "name": "Qwen Second Opinion",
-        "target": "gpt-oss:20b",
-        "description": "Independent review, critique, and second-pass checking.",
+        "target": AGENT_MODEL,
+        "description": "Muse Glimmer 30B for independent review, critique, and second-pass checking.",
     },
 }
 
@@ -96,6 +113,11 @@ IMPORTANT_TERMS = (
     "important", "critical", "high stakes", "final answer", "executive", "board meeting", "board of directors", "must be correct",
     "สำคัญ", "งานสำคัญ", "ตรวจสองรอบ", "ต้องถูกต้อง", "ส่งผู้บริหาร", "ตัดสินใจ", "อนุมัติ",
 )
+STRUCTURED_TERMS = (
+    "structured output", "json", "jsonl", "yaml", "xml", "schema", "extract fields", "classification",
+    "rag", "retrieval augmented", "retrieval-augmented", "knowledge base", "grounded answer", "context below",
+    "ข้อมูลแบบมีโครงสร้าง", "ส่งออกเป็น json", "ฐานความรู้", "ค้นคืนข้อมูล", "ตอบจากเอกสาร", "ดึงข้อมูลตามฟิลด์",
+)
 
 def _term_pattern(term: str) -> re.Pattern[str] | None:
     # ASCII terms match whole words only ('repo' must not hit 'report', 'git' not 'digital',
@@ -125,8 +147,9 @@ _is_code = _matcher(CODE_TERMS)
 _is_review = _matcher(REVIEW_TERMS)
 _is_research = _matcher(RESEARCH_TERMS)
 _is_important = _matcher(IMPORTANT_TERMS)
+_is_structured = _matcher(STRUCTURED_TERMS)
 
-app = FastAPI(title="Qwen Smart Model Router", version="1.2.0")
+app = FastAPI(title="Qwen Smart Model Router", version="1.3.0")
 _session = requests.Session()
 _available_cache: tuple[float, set[str]] = (0.0, set())
 _cache_lock = threading.Lock()
@@ -231,6 +254,15 @@ def available_models(force: bool = False) -> set[str]:
         return names
 
 
+def preferred_review_model(installed: set[str] | None = None) -> str | None:
+    """Use Muse for review when installed, retaining GPT-OSS as an upgrade-safe fallback."""
+    installed = available_models() if installed is None else installed
+    for candidate in (AGENT_MODEL, LEGACY_REVIEW_MODEL):
+        if candidate in installed:
+            return candidate
+    return None
+
+
 def classify(payload: dict[str, Any]) -> tuple[str, str]:
     messages = payload.get("messages") or []
     messages = messages if isinstance(messages, list) else []
@@ -241,7 +273,7 @@ def classify(payload: dict[str, Any]) -> tuple[str, str]:
     # A follow-up with no intent words of its own ("now make it faster") keeps the route of
     # the last few user turns, so a coding thread stays on the coder instead of reloading
     # another model; older history is ignored.
-    if not any(f(latest) for f in (_is_code, _is_important, _is_review, _is_research)):
+    if not any(f(latest) for f in (_is_code, _is_important, _is_review, _is_research, _is_structured)):
         recent = "\n".join(_user_texts(messages)[-RECENT_USER_TURNS:])
         if _is_code(recent):
             latest = recent
@@ -249,23 +281,25 @@ def classify(payload: dict[str, Any]) -> tuple[str, str]:
     # Images first: only qwen3.8 can see them; the coder and gpt-oss have no vision and
     # loading them would also evict qwen3.8.
     if has_media:
-        return "qwen3.8:27b", "image or video input"
+        return GENERAL_MODEL, "image or video input"
     if _is_code(latest):
-        return "qwen3-coder:30b", "coding or repository task"
+        return CODE_MODEL, "coding or repository task"
     if _is_important(latest):
-        return "qwen3.8:27b", "important request requires a strong draft before second-pass review"
+        return GENERAL_MODEL, "important request requires a strong draft before second-pass review"
     if _is_review(latest):
-        return "gpt-oss:20b", "independent review requested"
+        return AGENT_MODEL, "independent review requested"
     if has_tools:
-        return "qwen3.8:27b", "tool calling requires the general agent model"
+        return AGENT_MODEL, "tool calling or agent workflow"
+    if _is_structured(latest):
+        return STRUCTURED_MODEL, "structured output or retrieval-grounded task"
     # Length is the whole conversation, assistant replies included: a short follow-up in a
     # long chat must not switch to the small model, which would reload and reread everything.
     size = max(len(text), _all_chars(messages))
     if size > 1800 or _is_research(latest):
-        return "qwen3.8:27b", "complex, current, or research-oriented request"
+        return GENERAL_MODEL, "complex, current, or research-oriented request"
     if size <= 320 and text.strip():
-        return "qwen3:4b", "short low-risk request"
-    return "qwen3.8:27b", "general default"
+        return STRUCTURED_MODEL, "short low-risk request"
+    return GENERAL_MODEL, "general default"
 
 
 def needs_second_pass(payload: dict[str, Any]) -> bool:
@@ -291,16 +325,20 @@ def resolve_model(requested: str, payload: dict[str, Any]) -> tuple[str, str]:
         target, reason = profile["target"], f"selected profile {requested}"
     else:
         return requested, "direct model request"
-    # With a 24 GB eGPU qwen3.8 sits fully in VRAM and answers short prompts faster than
-    # qwen3:4b could be loaded - and loading qwen3:4b there would evict qwen3.8, which then
-    # has to come back over Thunderbolt for the next real request. This covers the qwen-fast
-    # profile too (Open WebUI's titles and context compaction use it).
-    if target == "qwen3:4b" and gpu_profile().get("vram_class") == "large":
-        target, reason = "qwen3.8:27b", f"{reason}; large GPU attached, kept on the resident general model"
     available = available_models()
     if target in available:
         return target, reason
-    for fallback in ("qwen3.8:27b", "qwen3-coder:30b", "gpt-oss:20b", "qwen3:4b"):
+    # Preserve the requested role during an in-place upgrade: old review/fast models are
+    # better substitutes for their successors than an unrelated large model.
+    role_fallbacks = {
+        AGENT_MODEL: (LEGACY_REVIEW_MODEL, GENERAL_MODEL, CODE_MODEL, STRUCTURED_MODEL, LEGACY_FAST_MODEL),
+        STRUCTURED_MODEL: (LEGACY_FAST_MODEL, GENERAL_MODEL, AGENT_MODEL, CODE_MODEL, LEGACY_REVIEW_MODEL),
+        GENERAL_MODEL: (AGENT_MODEL, CODE_MODEL, STRUCTURED_MODEL, LEGACY_REVIEW_MODEL, LEGACY_FAST_MODEL),
+        CODE_MODEL: (GENERAL_MODEL, AGENT_MODEL, STRUCTURED_MODEL, LEGACY_REVIEW_MODEL, LEGACY_FAST_MODEL),
+    }
+    for fallback in role_fallbacks.get(
+        target, (GENERAL_MODEL, AGENT_MODEL, CODE_MODEL, STRUCTURED_MODEL, LEGACY_REVIEW_MODEL, LEGACY_FAST_MODEL)
+    ):
         if fallback in available:
             return fallback, f"{reason}; {target} unavailable, used fallback"
     raise RuntimeError("No routed Ollama model is installed.")
@@ -352,7 +390,7 @@ def _response_text(path: str, data: dict[str, Any]) -> str:
 
 
 def _review_second_pass(
-    path: str, routed: dict[str, Any], first: dict[str, Any]
+    path: str, routed: dict[str, Any], first: dict[str, Any], review_model: str
 ) -> tuple[dict[str, Any], bool]:
     draft = _response_text(path, first).strip()
     if not draft or first.get("error"):
@@ -361,7 +399,7 @@ def _review_second_pass(
     if not original:
         original = str(routed.get("prompt") or "")
     review_payload = {
-        "model": "gpt-oss:20b",
+        "model": review_model,
         "messages": [
             {
                 "role": "system",
@@ -386,7 +424,7 @@ def _review_second_pass(
     if status >= 400 or not final_text:
         return first, False
     result = dict(first)
-    result["model"] = "gpt-oss:20b"
+    result["model"] = review_model
     if path == "/api/chat":
         message = dict(result.get("message") or {})
         message["role"] = "assistant"
@@ -396,7 +434,7 @@ def _review_second_pass(
         result["response"] = final_text
     result["qwen_router"] = {
         "draft_model": routed.get("model"),
-        "review_model": "gpt-oss:20b",
+        "review_model": review_model,
         "second_pass": True,
     }
     return result, True
@@ -526,7 +564,13 @@ async def _route_request(request: Request, path: str) -> JSONResponse | Streamin
     text, _ = _text_from_messages(routed.get("messages") or [])
     if not text and isinstance(routed.get("prompt"), str):
         text = str(routed["prompt"])
-    second_pass = requested == "qwen-auto:latest" and target != "gpt-oss:20b" and needs_second_pass(body)
+    review_model = await run_in_threadpool(preferred_review_model)
+    second_pass = bool(
+        requested == "qwen-auto:latest"
+        and review_model
+        and target != review_model
+        and needs_second_pass(body)
+    )
     _json_log(
         {
             "timestamp": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
@@ -547,14 +591,14 @@ async def _route_request(request: Request, path: str) -> JSONResponse | Streamin
         first, status = await run_in_threadpool(_post_json, path, routed)
         if status >= 400:
             return JSONResponse(first, status_code=status)
-        final, reviewed = await run_in_threadpool(_review_second_pass, path, routed, first)
+        final, reviewed = await run_in_threadpool(_review_second_pass, path, routed, first, review_model)
         _json_log(
             {
                 "timestamp": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
                 "requested": requested,
                 "selected": target,
                 "second_pass_completed": reviewed,
-                "review_model": "gpt-oss:20b" if reviewed else None,
+                "review_model": review_model if reviewed else None,
             }
         )
         return _single_stream(final) if wants_stream else JSONResponse(final)
@@ -567,7 +611,13 @@ async def _route_request(request: Request, path: str) -> JSONResponse | Streamin
 async def router_decision(request: Request) -> dict[str, Any]:
     body = await request.json()
     target, reason = await run_in_threadpool(resolve_model, "qwen-auto:latest", body)
-    return {"target": target, "reason": reason, "second_pass": target != "gpt-oss:20b" and needs_second_pass(body)}
+    review_model = await run_in_threadpool(preferred_review_model)
+    return {
+        "target": target,
+        "reason": reason,
+        "second_pass": bool(review_model and target != review_model and needs_second_pass(body)),
+        "review_model": review_model,
+    }
 
 
 @app.post("/api/chat")

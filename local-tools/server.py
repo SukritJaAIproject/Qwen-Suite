@@ -2547,7 +2547,7 @@ def capture_screen(project: str = "General", monitor: str | int = "all", region:
 
 
 @mcp.tool(
-    title="Generate an image with Runway",
+    title="Generate an image locally or with Runway",
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True),
 )
 def generate_image(
@@ -2559,8 +2559,10 @@ def generate_image(
     path_alias: str = "project",
     quality: Literal["720p", "1080p"] = "720p",
     task_id: str = "",
+    provider: Literal["auto", "local", "runway"] = "auto",
+    seed: int = -1,
 ) -> str:
-    """Create a picture from a text prompt with Runway gen4_image in the cloud (spends the owner's Runway API credits: 5 at 720p, 8 at 1080p) into the project outputs folder. ratio: 16:9 | 1:1 | 9:16 (also 4:3, 3:4). reference_image: an https URL or an image file in the project (relative to path_alias); refer to it as @ref in the prompt. One call per picture asked for; do not retry a failed or refused prompt unchanged. status=timeout gives task_id: call again with only task_id to fetch the picture without new credits. status=not_configured: tell the owner what message says and never ask for the key in chat. On Telegram end the reply with MEDIA:<telegram_attachment>."""
+    """Create a picture in the project outputs folder. provider=auto uses the separate local Qwen-Image 2.1 optional pack when installed, otherwise Runway gen4_image; local keeps prompts/files on the machine and spends no credits, runway sends them to the cloud and spends 5 credits at 720p or 8 at 1080p. ratio: 16:9 | 1:1 | 9:16 (also 4:3, 3:4). reference_image: a project image (or https URL for Runway) relative to path_alias. seed >= 0 makes local generation repeatable. task_id is Runway-only and fetches a timed-out picture without new credits. status=not_configured: relay the setup message. On Telegram end with MEDIA:<telegram_attachment>."""
     import image_gen
 
     project_dir, manifest = _output_project(project)
@@ -2568,7 +2570,8 @@ def generate_image(
     if reference and not re.match(r"(?i)^[a-z][a-z0-9+.-]*://", reference):
         reference = str(_project_target(project, path_alias, reference, must_exist=True)[0])
     result = image_gen.generate(project_dir / "outputs", prompt, ratio=ratio, output_name=output_name,
-                                reference_image=reference, task_id=task_id, quality=quality)
+                                reference_image=reference, task_id=task_id, quality=quality,
+                                provider=provider, seed=None if seed < 0 else seed)
     result["project"] = manifest["slug"]
     return _json(result)
 

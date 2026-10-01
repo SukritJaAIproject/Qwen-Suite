@@ -12,11 +12,13 @@ from pathlib import Path
 
 MODEL_ID = "qwen-auto:latest"
 MODEL_PROFILES = [
-    ("qwen-auto:latest", "Qwen Auto Router", "Automatically selects General, Code, Fast, or Review for each request."),
+    ("qwen-auto:latest", "Qwen Auto Router", "Automatically selects General, Code, Agent, Structured/RAG, or Review for each request."),
     ("qwen-general:latest", "Qwen General + Vision", "Qwen3.8 27B for professional work, Thai, tools, images, and long tasks."),
     ("qwen-code:latest", "Qwen Coding", "Qwen3 Coder 30B for repositories, programming, debugging, and automation."),
-    ("qwen-fast:latest", "Qwen Fast", "Qwen3 4B for short chat, classification, translation, and simple formatting."),
-    ("qwen-review:latest", "Qwen Second Opinion", "GPT-OSS 20B for independent review and second-pass checking."),
+    ("qwen-fast:latest", "Qwen Fast Structured + RAG", "Granite 4.2 8B for short tasks, structured output, RAG answers, and formatting."),
+    ("qwen-structured:latest", "Qwen Structured + RAG", "Granite 4.2 8B for JSON, schemas, extraction, and retrieval-grounded answers."),
+    ("qwen-agent:latest", "Qwen Agent", "Muse Glimmer 30B for tools, multi-step agent work, and failure recovery."),
+    ("qwen-review:latest", "Qwen Second Opinion", "Muse Glimmer 30B for independent review and second-pass checking."),
     ("qwen3.8:27b", "Qwen3.8 27B Direct", "Direct access to the primary general, vision, and agent model."),
 ]
 # Preset rows made by hand in Workspace > Models; they get the builtinTools trim only.
@@ -506,12 +508,11 @@ def configure(db_path: Path) -> dict[str, object]:
             "web.search.bypass_web_loader": False,
             # Long Thai chats on a 1-2 tok/s CPU box are exactly what compaction is for;
             # every supporting key below is already configured (token_threshold/cap 24000,
-            # retention 40%, summariser qwen3:4b), so leaving this False silently disabled
+            # retention 40%, summariser qwen-fast/Granite), so leaving this False silently disabled
             # the feature the README promises. Re-enabled 2026-09-22.
             "chat.context_compaction.enable": True,
-            # Summaries go through the router's fast profile (think off; on a large eGPU the
-            # router keeps the main model rather than loading a second one). Was qwen3:4b
-            # straight from Ollama, which thinks and can spend the 1000-token budget on it.
+            # Summaries and titles use Granite through the router's fast profile. Granite is
+            # optimized for concise structured tasks and does not replace the embedding model.
             "chat.context_compaction.model": "qwen-fast:latest",
             # Titles use the fast profile: through qwen-auto the title prompt's "code fences"
             # routed every title to the 30B coder, evicting the main model (one loaded model).

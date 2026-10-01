@@ -1,4 +1,4 @@
-"""generate_image: text-to-image through Runway's developer API (added 2026-09-30, OPTIONAL).
+"""generate_image: optional local Qwen-Image 2.1 with Runway cloud fallback.
 
 Why this module has its own credential: the only Runway logins on this machine are Open WebUI's
 MCP OAuth sessions (webui.db oauth_session, encrypted with Open WebUI's secret). Those tokens stay
@@ -16,7 +16,7 @@ The key only ever goes into the Authorization header of requests to API_BASE; it
 logged, returned, written anywhere or sent to the image CDN, and any echo of it in an error text
 is redacted. Without a key the tool answers status=not_configured and changes nothing.
 
-Every generation spends Runway API credits (gen4_image: 5 credits at 720p, 8 at 1080p) and sends
+Every Runway generation spends API credits (gen4_image: 5 credits at 720p, 8 at 1080p) and sends
 the prompt (and the reference image, if any) to Runway's cloud. A task that is still running at
 the timeout is not lost: call again with task_id=<id> to fetch it without spending credits again.
 The picture goes to the project's outputs folder (never overwrites, document_builder._reserve)
@@ -28,6 +28,8 @@ import base64
 import io
 import os
 import re
+import secrets
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -57,6 +59,11 @@ MAX_REFERENCE_SIDE = 2048
 MAX_REFERENCE_BYTES = 3_500_000   # base64 grows it by 4/3; Runway takes data URIs up to ~5 MB
 REFERENCE_TAG = "ref"
 _TERMINAL_FAIL = {"FAILED", "CANCELLED"}
+SUITE_ROOT = Path(__file__).resolve().parent.parent
+LOCAL_PACK_ROOT = SUITE_ROOT / "optional" / "qwen-image-2.1"
+LOCAL_PYTHON = LOCAL_PACK_ROOT / "venv" / "Scripts" / "python.exe"
+LOCAL_WORKER = LOCAL_PACK_ROOT / "worker.py"
+LOCAL_MODEL = SUITE_ROOT / "model-cache" / "Qwen-Image-2.1"
 
 
 def _api_key() -> tuple[str, str]:
@@ -192,9 +199,9 @@ def account_status(check_credits: bool = False, http=None) -> dict[str, Any]:
     return result
 
 
-def generate(out_dir: Path, prompt: str = "", ratio: Any = "16:9", output_name: str = "", reference_image: Any = "",
-             task_id: str = "", quality: str = "720p", timeout: float = TIMEOUT, http=None,
-             sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
+def _generate_runway(out_dir: Path, prompt: str = "", ratio: Any = "16:9", output_name: str = "", reference_image: Any = "",
+                      task_id: str = "", quality: str = "720p", timeout: float = TIMEOUT, http=None,
+                      sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
     quality = str(quality or "720p").strip().lower()
     if quality not in CREDITS:
         raise ValueError("quality must be 720p or 1080p")
@@ -309,3 +316,131 @@ def generate(out_dir: Path, prompt: str = "", ratio: Any = "16:9", output_name: 
         "delivery": "Tell the user the path. On Telegram, end the reply with a line of its own: MEDIA:<telegram_attachment>",
         "privacy": "The prompt (and reference image) were sent to Runway's cloud; credits were spent on the owner's Runway API account.",
     }
+
+
+def local_status() -> dict[str, Any]:
+    """Report optional-pack readiness without importing Torch or Diffusers into this service."""
+    missing = [str(path) for path in (LOCAL_PYTHON, LOCAL_WORKER, LOCAL_MODEL / "model_index.json") if not path.is_file()]
+    return {
+        "installed": not missing,
+        "provider": "qwen-image-2.1-local",
+        "pack_root": str(LOCAL_PACK_ROOT),
+        "model_root": str(LOCAL_MODEL),
+        "missing": missing,
+    }
+
+
+def _generate_local(out_dir: Path, prompt: str, ratio: Any, output_name: str, reference_image: Any,
+                    quality: str, timeout: float, seed: int | None) -> dict[str, Any]:
+    status = local_status()
+    if not status["installed"]:
+        return {
+            "status": "not_configured",
+            "provider": "local",
+            "message": (
+                "Qwen-Image 2.1 optional pack is not installed. Extract the separate optional-pack ZIP and run "
+                "Install-Qwen-Image-2.1.cmd; the main Qwen Suite installer intentionally does not include these weights."
+            ),
+            "missing": status["missing"],
+        }
+    prompt = str(prompt or "").strip()
+    if not prompt:
+        raise ValueError("prompt is required (describe the picture; English usually works best)")
+    if len(prompt) > 4000:
+        raise ValueError(f"prompt is too long ({len(prompt)} > 4000 characters)")
+    quality = str(quality or "720p").strip().lower()
+    if quality not in CREDITS:
+        raise ValueError("quality must be 720p or 1080p")
+    size = _ratio(ratio, quality)
+    width, height = (int(part) for part in size.split(":", 1))
+    reference = str(reference_image or "").strip()
+    if reference and re.match(r"(?i)^[a-z][a-z0-9+.-]*://", reference):
+        raise ValueError("the local provider accepts only a local project image, not a URL")
+    if reference and not Path(reference).is_file():
+        raise FileNotFoundError(f"reference image not found: {reference}")
+    seed = secrets.randbelow(2**31) if seed is None else int(seed)
+    if seed < 0 or seed >= 2**63:
+        raise ValueError("seed must be between 0 and 9223372036854775807")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    name = str(output_name or "").strip()
+    if name.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+        name = name.rsplit(".", 1)[0]
+    target = DB._reserve(out_dir / f"{DB._safe_name(name, 'qwen-image-' + time.strftime('%Y%m%d-%H%M%S'))[:100]}.png")
+    command = [
+        str(LOCAL_PYTHON), str(LOCAL_WORKER), "--model-dir", str(LOCAL_MODEL), "--output", str(target),
+        "--prompt", prompt, "--width", str(width), "--height", str(height),
+        "--steps", "30" if quality == "720p" else "40", "--seed", str(seed),
+    ]
+    if reference:
+        command.extend(("--image", reference))
+    env = os.environ.copy()
+    env.update({"PYTHONUTF8": "1", "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"})
+    started = time.monotonic()
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=max(1800.0, float(timeout)),
+            env=env,
+            creationflags=0x08000000 if os.name == "nt" else 0,
+            check=False,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "unknown worker error").strip()[-1200:]
+            raise RuntimeError(f"Qwen-Image 2.1 worker failed ({completed.returncode}): {detail}")
+        if not target.is_file() or target.stat().st_size == 0:
+            raise RuntimeError("Qwen-Image 2.1 worker completed without an output image")
+        from PIL import Image
+
+        with Image.open(target) as image:
+            image.verify()
+        with Image.open(target) as image:
+            actual_width, actual_height = image.size
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    telegram = DB._telegram_copy(target)
+    return {
+        "status": "created",
+        "provider": "local",
+        "path": str(target),
+        "format": "png",
+        "width": actual_width,
+        "height": actual_height,
+        "bytes": target.stat().st_size,
+        "model": "Qwen/Qwen-Image-2.1",
+        "ratio": size,
+        "quality": quality,
+        "seed": seed,
+        "used_reference_image": bool(reference),
+        "seconds": round(time.monotonic() - started, 2),
+        "credits_estimate": 0,
+        "telegram_attachment": str(telegram) if telegram else None,
+        "media": [f"MEDIA:{telegram}"] if telegram else [],
+        "delivery": "Tell the user the path. On Telegram, end the reply with a line of its own: MEDIA:<telegram_attachment>",
+        "privacy": "Generation ran locally with Qwen-Image 2.1; no prompt or reference image was sent to Runway.",
+    }
+
+
+def generate(out_dir: Path, prompt: str = "", ratio: Any = "16:9", output_name: str = "", reference_image: Any = "",
+             task_id: str = "", quality: str = "720p", timeout: float = TIMEOUT, http=None,
+             sleep: Callable[[float], None] = time.sleep, provider: str = "auto", seed: int | None = None) -> dict[str, Any]:
+    """Use the optional local Qwen pack when ready, otherwise preserve the Runway workflow."""
+    provider = str(provider or "auto").strip().lower()
+    if provider not in {"auto", "local", "runway"}:
+        raise ValueError("provider must be auto, local, or runway")
+    if task_id and provider == "local":
+        raise ValueError("task_id is only used by the Runway provider")
+    use_local = provider == "local" or (provider == "auto" and not task_id and local_status()["installed"])
+    if use_local:
+        return _generate_local(out_dir, prompt, ratio, output_name, reference_image, quality, timeout, seed)
+    result = _generate_runway(
+        out_dir, prompt, ratio=ratio, output_name=output_name, reference_image=reference_image,
+        task_id=task_id, quality=quality, timeout=timeout, http=http, sleep=sleep,
+    )
+    if provider == "auto" and result.get("status") == "not_configured":
+        result["local_optional_pack"] = local_status()
+    return result
