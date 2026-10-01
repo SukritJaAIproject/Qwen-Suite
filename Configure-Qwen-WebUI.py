@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import bcrypt
 import hashlib
 import json
 import shutil
@@ -11,6 +12,9 @@ from pathlib import Path
 
 
 MODEL_ID = "qwen-auto:latest"
+DEFAULT_ADMIN_USERNAME = "admin"
+DEFAULT_ADMIN_PASSWORD = "P@ssw0rd"
+DEFAULT_ADMIN_MARKER = "qwen_suite.auth.default_admin_provisioned"
 MODEL_PROFILES = [
     ("qwen-auto:latest", "Qwen Auto Router", "Automatically selects General, Code, Agent, Structured/RAG, or Review for each request."),
     ("qwen-general:latest", "Qwen General + Vision", "Qwen3.8 27B for professional work, Thai, tools, images, and long tasks."),
@@ -313,18 +317,6 @@ def wait_for_database(path: Path, timeout: int = 240) -> None:
     raise TimeoutError(f"Open WebUI database was not ready: {path}")
 
 
-def first_owner(connection: sqlite3.Connection, timeout: int = 180) -> str:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        row = connection.execute(
-            "SELECT id FROM user ORDER BY CASE WHEN role='admin' THEN 0 ELSE 1 END, created_at LIMIT 1"
-        ).fetchone()
-        if row:
-            return str(row[0])
-        time.sleep(2)
-    raise RuntimeError("Open WebUI did not create its local owner account")
-
-
 def set_config(connection: sqlite3.Connection, key: str, value: object, now: int) -> None:
     connection.execute(
         """
@@ -333,6 +325,79 @@ def set_config(connection: sqlite3.Connection, key: str, value: object, now: int
         """,
         (key, compact(value), now),
     )
+
+
+def provision_default_admin(connection: sqlite3.Connection, now: int) -> tuple[str, bool]:
+    """Create or migrate the local owner once, without resetting later password changes."""
+    marker = connection.execute(
+        "SELECT value FROM config WHERE key=?", (DEFAULT_ADMIN_MARKER,)
+    ).fetchone()
+    try:
+        already_provisioned = bool(marker and json.loads(marker[0]) is True)
+    except (TypeError, ValueError):
+        already_provisioned = False
+
+    row = connection.execute(
+        """
+        SELECT id FROM user
+        ORDER BY
+          CASE WHEN lower(email)=? OR lower(COALESCE(username,''))=? THEN 0
+               WHEN role='admin' THEN 1 ELSE 2 END,
+          created_at
+        LIMIT 1
+        """,
+        (DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_USERNAME),
+    ).fetchone()
+
+    if already_provisioned and row:
+        return str(row[0]), False
+
+    owner_id = str(row[0]) if row else str(uuid.uuid4())
+    password_hash = bcrypt.hashpw(
+        DEFAULT_ADMIN_PASSWORD.encode("utf-8"), bcrypt.gensalt()
+    ).decode("utf-8")
+
+    if row:
+        connection.execute(
+            """
+            UPDATE user
+            SET name=?, email=?, username=?, role='admin', updated_at=?
+            WHERE id=?
+            """,
+            (DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_USERNAME, now, owner_id),
+        )
+    else:
+        connection.execute(
+            """
+            INSERT INTO user
+              (id,name,email,username,role,profile_image_url,last_active_at,updated_at,created_at)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                owner_id,
+                DEFAULT_ADMIN_USERNAME,
+                DEFAULT_ADMIN_USERNAME,
+                DEFAULT_ADMIN_USERNAME,
+                "admin",
+                "/user.png",
+                now,
+                now,
+                now,
+            ),
+        )
+
+    connection.execute(
+        """
+        INSERT INTO auth (id,email,password,active) VALUES (?,?,?,1)
+        ON CONFLICT(id) DO UPDATE SET
+          email=excluded.email,
+          password=excluded.password,
+          active=1
+        """,
+        (owner_id, DEFAULT_ADMIN_USERNAME, password_hash),
+    )
+    set_config(connection, DEFAULT_ADMIN_MARKER, True, now)
+    return owner_id, True
 
 
 def configure(db_path: Path) -> dict[str, object]:
@@ -345,8 +410,8 @@ def configure(db_path: Path) -> dict[str, object]:
     connection = sqlite3.connect(db_path, timeout=60)
     connection.execute("PRAGMA busy_timeout=60000")
     try:
-        owner_id = first_owner(connection)
         now = int(time.time())
+        owner_id, admin_provisioned = provision_default_admin(connection, now)
 
         params = {
             "system": SYSTEM_PROMPT,
@@ -476,6 +541,8 @@ def configure(db_path: Path) -> dict[str, object]:
             if item["auth_type"] == "oauth_2.1" and old_info.get("oauth_client_info"):
                 item["info"]["oauth_client_info"] = old_info["oauth_client_info"]
         settings = {
+            "ui.enable_signup": False,
+            "ui.enable_login_form": True,
             "ollama.enable": True,
             "ollama.base_urls": ["http://127.0.0.1:8770", "http://127.0.0.1:11434"],
             "tool_server.connections": tool_connections,
@@ -557,6 +624,7 @@ def configure(db_path: Path) -> dict[str, object]:
         return {
             "model": MODEL_ID,
             "owner_id": owner_id,
+            "default_admin_provisioned": admin_provisioned,
             "profiles": [item[0] for item in MODEL_PROFILES],
             "embedding": "qwen3-embedding:4b",
             "reranker": "Qwen/Qwen3-Reranker-0.6B",

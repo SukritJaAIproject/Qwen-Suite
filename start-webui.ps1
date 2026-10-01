@@ -51,9 +51,13 @@ $env:RAG_TOP_K_RERANKER = '4'
 $env:RAG_HYBRID_BM25_WEIGHT = '0.4'
 $env:CHUNK_SIZE = '800'
 $env:CHUNK_OVERLAP = '120'
-$env:WEBUI_AUTH = 'False'
-# No login, so only this machine's own Open WebUI page may call the API from a browser
-# (the default '*' lets any website open in a local browser drive it).
+$env:WEBUI_AUTH = 'True'
+$env:ENABLE_PASSWORD_AUTH = 'True'
+$env:ENABLE_LOGIN_FORM = 'True'
+$env:ENABLE_SIGNUP = 'False'
+$env:ENABLE_INITIAL_ADMIN_SIGNUP = 'False'
+# Password login is required and self-registration is disabled. Only this machine's own
+# Open WebUI page may call the API from a browser.
 $env:CORS_ALLOW_ORIGIN = 'http://127.0.0.1:3000;http://localhost:3000'
 # Voice input: skip silence (local faster-whisper, model in model-cache). Thai is the owner's
 # default in Settings > Audio (set by Configure-Qwen-WebUI.py); WHISPER_LANGUAGE is not used
