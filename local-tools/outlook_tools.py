@@ -187,7 +187,7 @@ def _recipients(value: Any, name: str, required: bool) -> list[str]:
         m = re.fullmatch(r"(?:.*<)?\s*([^<>]+?)\s*>?", part)  # "Name <a@b.c>" -> a@b.c
         address = (m.group(1) if m else part).strip().strip("<>").strip()
         if not _ADDR.fullmatch(address) or ".." in address or address.endswith("."):
-            raise ValueError(f"{name}: '{_clean(part, 80)}' ไม่ใช่อีเมลที่ถูกต้อง (เช่น name@egat.co.th)")
+            raise ValueError(f"{name}: '{_clean(part, 80)}' ไม่ใช่อีเมลที่ถูกต้อง (เช่น name@example.com)")
         if address.lower() not in (a.lower() for a in out):
             out.append(address)
     if required and not out:
