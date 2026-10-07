@@ -19,6 +19,8 @@
 !/theme/
 # GitHub front page (English README) and its screenshots only
 !/.github/
+/.github/*
+!/.github/README.md
 !/docs/
 /docs/*
 !/docs/screenshots/
@@ -49,6 +51,8 @@ openclaw-workspace/outputs/
 internet-gateway/data/
 local-tools/allowed-roots.json
 .env
+.env.*
+*.env
 *.pem
 *.key
 auth.json
