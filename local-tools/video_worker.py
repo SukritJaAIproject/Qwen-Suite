@@ -232,14 +232,19 @@ class VideoBuild:
         try:
             if data is not None:
                 raise StopIteration
-            # On a 24 GB eGPU the general model is resident and fast, and loading qwen3:4b
+            # On a 24 GB eGPU the general model is resident and fast, and loading granite4.2:8b
             # next to it would evict it; write the storyboard with it instead. No num_ctx,
             # num_thread or shift in either branch: every caller loads a model with the
             # same runner options (the server's 32768 context, llama-server's own thread
             # count, the default shift), so this reuses a model someone else loaded instead
             # of making Ollama reload it (see README "runner options").
             large_gpu = gpu_vram_class() == "large"
-            storyboard_model = "qwen3.8:27b" if large_gpu else "qwen3:4b"
+            # 1.6: Granite 4.2 8B replaced qwen3:4b as the small model (qwen3:4b is no longer installed).
+            storyboard_model = "qwen3.8:27b" if large_gpu else "granite4.2:8b"
+            if storyboard_model == "granite4.2:8b" and language == "thai":
+                # Measured 2026-10-06 (i7-10750H): about half of Granite's Thai narration lines were
+                # ungrammatical, and 10 scenes took 548 s. The template is what Thai jobs got anyway.
+                raise RuntimeError("granite4.2:8b writes unreliable Thai; using the instant local storyboard fallback")
             options: dict[str, Any] = {
                 "temperature": 0.35,
                 "num_predict": max(2200, min(7200, scene_count * 120)),
@@ -247,10 +252,12 @@ class VideoBuild:
             if large_gpu:
                 keep_alive, timeout = "2h", (10, 900)
             else:
-                keep_alive, timeout = "15m", (10, 240 if scene_count > 36 else 150)
+                # The whole JSON must arrive within the read timeout (stream=False). Granite writes about
+                # 3 tokens/s on this CPU, roughly 150 tokens a scene: 4 scenes -> 190 s, 10 -> 430 s.
+                keep_alive, timeout = "15m", (10, min(600, 30 + 40 * scene_count))
                 running = requests.get("http://127.0.0.1:11434/api/ps", timeout=5).json().get("models", [])
                 running_names = {str(item.get("name") or item.get("model") or "") for item in running}
-                if running_names and "qwen3:4b" not in running_names:
+                if running_names and storyboard_model not in running_names:
                     raise RuntimeError(
                         "Ollama is busy with another large model; using the instant local storyboard fallback"
                     )

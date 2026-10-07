@@ -522,7 +522,9 @@ async def version() -> JSONResponse:
 
 # Models whose llama-server turns KV-cache shifting off by itself (logged at every load:
 # "KV cache shifting is not supported for this context, disabling"), so 'shift' is inert.
-NO_KV_SHIFT_MODELS = {"qwen3.8:27b", "qwen3.8-backup:27b", "gpt-oss:20b"}
+# muse-glimmer:30b logs the same line (checked 2026-10-07); gpt-oss:20b stays for upgraded
+# machines that still have it installed.
+NO_KV_SHIFT_MODELS = {"qwen3.8:27b", "qwen3.8-backup:27b", "muse-glimmer:30b", "gpt-oss:20b"}
 
 
 @app.get("/api/ps")
@@ -546,7 +548,7 @@ async def _route_request(request: Request, path: str) -> JSONResponse | Streamin
     # So the router makes its callers look exactly like the ones that talk to Ollama directly
     # (Open WebUI's direct models and RAG, the internet gateway, the video worker):
     #  - no top-level 'shift' for the models whose llama-server disables KV-cache shifting
-    #    by itself (qwen3.8 = qwen35, gpt-oss: "KV cache shifting is not supported"), so the
+    #    by itself (qwen3.8 = qwen35, muse-glimmer, gpt-oss: "KV cache shifting is not supported"), so the
     #    model's default applies to everyone there. OpenClaw hard-codes shift:false, and it
     #    also sends truncate:false, so for these models the flag changes nothing but the
     #    reload. For models that can shift (qwen3-coder, qwen3:4b), the caller's shift passes

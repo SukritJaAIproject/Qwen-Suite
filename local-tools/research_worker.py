@@ -86,10 +86,10 @@ DEPTHS: dict[str, dict[str, int]] = {
 }
 
 # Resident model first; with nothing resident the general model is loaded (it evicts nothing).
-# qwen3:4b writes weak Thai, and evicting it costs little, so it is only used when nothing
-# stronger is installed.
-PREFERRED_MODELS = ("qwen3.8:27b", "qwen3-coder:30b", "gpt-oss:20b", "qwen3:4b")
-WEAK_MODELS = {"qwen3:4b"}
+# granite4.2:8b (the small 1.6 model; its model card does not list Thai) and evicting it costs
+# little, so it is only used when nothing stronger is installed.
+PREFERRED_MODELS = ("qwen3.8:27b", "qwen3-coder:30b", "muse-glimmer:30b", "granite4.2:8b")
+WEAK_MODELS = {"granite4.2:8b"}
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36 QwenResearch/1.0"
 # Result pages with no article text of their own (social/video sites, and the stock-photo sites
@@ -957,7 +957,7 @@ def _strip_think(text: str) -> str:
 
 # Mirrors NO_KV_SHIFT_MODELS in ai-services\router.py: the router drops 'shift' for these, so
 # every caller gets the model's default there and sending none matches.
-ROUTER_NO_SHIFT_MODELS = {"qwen3.8:27b", "qwen3.8-backup:27b", "gpt-oss:20b"}
+ROUTER_NO_SHIFT_MODELS = {"qwen3.8:27b", "qwen3.8-backup:27b", "muse-glimmer:30b", "gpt-oss:20b"}
 
 
 def call_model(messages: list[dict[str, str]], *, num_predict: int, temperature: float = 0.2, timeout_seconds: int = 3600) -> dict[str, Any]:

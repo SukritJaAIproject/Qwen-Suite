@@ -147,7 +147,6 @@ $cmbModel.DropDownStyle = 'DropDownList'
 $cmbModel.Location = New-Object System.Drawing.Point(120, 328)
 $cmbModel.Size = New-Object System.Drawing.Size(465, 28)
 [void]$cmbModel.Items.Add('qwen3-coder:30b')
-[void]$cmbModel.Items.Add('gpt-oss:20b')
 $cmbModel.SelectedIndex = 0
 if ($prefs -and $prefs.PSObject.Properties['last_model'] -and $cmbModel.Items.Contains([string]$prefs.last_model)) { $cmbModel.SelectedItem = [string]$prefs.last_model }
 $form.Controls.Add($cmbModel)

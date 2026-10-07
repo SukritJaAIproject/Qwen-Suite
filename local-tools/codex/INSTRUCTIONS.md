@@ -1,7 +1,7 @@
 # Qwen Codex – ให้ Codex CLI ทำงานกับโมเดลในเครื่อง
 
 สคริปต์ในโฟลเดอร์นี้ใช้ Codex CLI ที่มากับแอป Codex (`%LOCALAPPDATA%\OpenAI\Codex\bin\*\codex.exe`)
-แต่ให้คุยกับ Ollama ในเครื่อง (qwen3-coder:30b หรือ gpt-oss:20b) แทน OpenAI
+แต่ให้คุยกับ Ollama ในเครื่อง (qwen3-coder:30b) แทน OpenAI
 ใช้สั่งงานเขียนโค้ด วิเคราะห์โฟลเดอร์ หรือรีวิวโค้ดใน git repo แบบทำงานเบื้องหลัง แล้วแจ้งเตือนเมื่อเสร็จ
 
 เริ่มงานได้จากเดสก์ท็อป (Start Menu > Qwen Suite หรือบรรทัดคำสั่ง) และ **จากแชต** (Telegram ผ่าน OpenClaw, Open WebUI)

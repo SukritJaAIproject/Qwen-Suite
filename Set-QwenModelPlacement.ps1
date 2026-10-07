@@ -39,7 +39,7 @@ $StatePath = Join-Path $Root 'data\model-placement.json'
 $BackupRoot = Join-Path $Root 'data\placement-backups'
 $WeightTypes = '\.(model|projector|adapter|draft)$'
 # The models the router sends chats to: pinning one of these makes every chat slow.
-$MainModels = @('qwen3.8:27b', 'qwen3-coder:30b', 'gpt-oss:20b', 'qwen3:4b')
+$MainModels = @('qwen3.8:27b', 'qwen3-coder:30b', 'muse-glimmer:30b', 'granite4.2:8b')
 
 function Invoke-OllamaJson([string]$Path, $Body, [int]$TimeoutSec = 30) {
     if ($null -eq $Body) { return Invoke-RestMethod "$Api$Path" -TimeoutSec $TimeoutSec }

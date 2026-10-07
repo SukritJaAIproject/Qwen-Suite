@@ -100,7 +100,9 @@ $PolicyHookScript = Join-Path $PSScriptRoot 'policy_hook.py'
 $PolicyTrustFile = Join-Path $CodexHome 'policy-hook.trust.json'
 $script:HookRunDir = ''
 $Utf8 = New-Object System.Text.UTF8Encoding($false)
-$KnownModels = @('qwen3-coder:30b', 'gpt-oss:20b')
+# gpt-oss:20b was removed in 1.6; add muse-glimmer:30b here and in qwen-models.template.json together
+# once it has been tested with Codex tool calls (the -Check doctor flags any catalog slug not listed here).
+$KnownModels = @('qwen3-coder:30b')
 $script:CurrentJobId = $JobId
 
 if ($JsonOut) {
