@@ -13,6 +13,10 @@ from pathlib import Path
 
 MODEL_ID = "qwen-auto:latest"
 DEFAULT_ADMIN_USERNAME = "admin"
+# Sign-in address of the default owner. Open WebUI's sign-in box is <input type="email" required>,
+# so the browser will not submit a bare "admin" (the 1 Oct 2026 1.6.1 build stored that; only the
+# API accepted it). Open WebUI's own validate_email_format accepts any "@localhost" address.
+DEFAULT_ADMIN_EMAIL = "admin@localhost"
 DEFAULT_ADMIN_PASSWORD = "P@ssw0rd"
 DEFAULT_ADMIN_MARKER = "qwen_suite.auth.default_admin_provisioned"
 MODEL_PROFILES = [
@@ -341,12 +345,12 @@ def provision_default_admin(connection: sqlite3.Connection, now: int) -> tuple[s
         """
         SELECT id FROM user
         ORDER BY
-          CASE WHEN lower(email)=? OR lower(COALESCE(username,''))=? THEN 0
+          CASE WHEN lower(email) IN (?, ?) OR lower(COALESCE(username,''))=? THEN 0
                WHEN role='admin' THEN 1 ELSE 2 END,
           created_at
         LIMIT 1
         """,
-        (DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_USERNAME),
+        (DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_USERNAME),
     ).fetchone()
 
     if already_provisioned and row:
@@ -364,7 +368,7 @@ def provision_default_admin(connection: sqlite3.Connection, now: int) -> tuple[s
             SET name=?, email=?, username=?, role='admin', updated_at=?
             WHERE id=?
             """,
-            (DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_USERNAME, now, owner_id),
+            (DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_USERNAME, now, owner_id),
         )
     else:
         connection.execute(
@@ -376,7 +380,7 @@ def provision_default_admin(connection: sqlite3.Connection, now: int) -> tuple[s
             (
                 owner_id,
                 DEFAULT_ADMIN_USERNAME,
-                DEFAULT_ADMIN_USERNAME,
+                DEFAULT_ADMIN_EMAIL,
                 DEFAULT_ADMIN_USERNAME,
                 "admin",
                 "/user.png",
@@ -394,10 +398,32 @@ def provision_default_admin(connection: sqlite3.Connection, now: int) -> tuple[s
           password=excluded.password,
           active=1
         """,
-        (owner_id, DEFAULT_ADMIN_USERNAME, password_hash),
+        (owner_id, DEFAULT_ADMIN_EMAIL, password_hash),
     )
     set_config(connection, DEFAULT_ADMIN_MARKER, True, now)
     return owner_id, True
+
+
+def migrate_default_admin_email(connection: sqlite3.Connection, owner_id: str, now: int) -> str:
+    """Move an owner still stored as the bare "admin" (1 Oct 1.6.1) to DEFAULT_ADMIN_EMAIL.
+
+    Runs on every configure, also after the provisioning marker is set. Only that exact legacy
+    value is changed: an address the owner chose later and the password (default or already
+    changed) are left alone.
+    """
+    row = connection.execute("SELECT email FROM user WHERE id=?", (owner_id,)).fetchone()
+    if not row or str(row[0] or "").lower() != DEFAULT_ADMIN_USERNAME:
+        return "unchanged"
+    taken = connection.execute(
+        "SELECT 1 FROM user WHERE lower(email)=? AND id<>?", (DEFAULT_ADMIN_EMAIL, owner_id)
+    ).fetchone()
+    if taken:
+        return f"kept 'admin': {DEFAULT_ADMIN_EMAIL} belongs to another account"
+    connection.execute(
+        "UPDATE user SET email=?, updated_at=? WHERE id=?", (DEFAULT_ADMIN_EMAIL, now, owner_id)
+    )
+    connection.execute("UPDATE auth SET email=? WHERE id=?", (DEFAULT_ADMIN_EMAIL, owner_id))
+    return f"migrated to {DEFAULT_ADMIN_EMAIL}"
 
 
 def configure(db_path: Path) -> dict[str, object]:
@@ -412,6 +438,7 @@ def configure(db_path: Path) -> dict[str, object]:
     try:
         now = int(time.time())
         owner_id, admin_provisioned = provision_default_admin(connection, now)
+        admin_email = migrate_default_admin_email(connection, owner_id, now)
 
         params = {
             "system": SYSTEM_PROMPT,
@@ -625,6 +652,7 @@ def configure(db_path: Path) -> dict[str, object]:
             "model": MODEL_ID,
             "owner_id": owner_id,
             "default_admin_provisioned": admin_provisioned,
+            "default_admin_email": admin_email,
             "profiles": [item[0] for item in MODEL_PROFILES],
             "embedding": "qwen3-embedding:4b",
             "reranker": "Qwen/Qwen3-Reranker-0.6B",
