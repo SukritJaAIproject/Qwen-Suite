@@ -36,7 +36,7 @@
 </head>
 <body><main class="wrap">
   <header class="head">
-    <div><div class="title">Qwen Suite Status</div><div class="subtitle">ตรวจสุขภาพทั้งชุดแบบอ่านอย่างเดียว: บริการ, Ollama, GPU (ทาง B), ดิสก์, Telegram/WhatsApp, งานตั้งเวลา, OAuth, ตัวติดตั้ง</div></div>
+    <div><div class="title">Qwen Suite Status</div><div class="subtitle">ตรวจสุขภาพทั้งชุดแบบอ่านอย่างเดียว: บริการ, Ollama, GPU (ทาง B), โมเดลที่ชุดเรียกใช้, ดิสก์, Telegram/WhatsApp, งานตั้งเวลา, OAuth, ตัวติดตั้ง</div></div>
     <div class="tools">
       <label><input type="checkbox" id="auto" checked> อัปเดตส่วนเบาทุก 15 วินาที</label>
       <button id="fullBtn" onclick="load(true)">ตรวจใหม่ทั้งหมด</button>
@@ -56,7 +56,8 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const CLS={ok:'ok',warn:'warn-b',bad:'bad-b',unknown:'unk'};
 const badge=(s,t)=>`<span class="badge ${CLS[s]||'unk'}">${esc(t)}</span>`;
-const WIDE=new Set(['ollama','channels','automations','payload']);
+const WIDE=new Set(['ollama','models','channels','automations','payload']);
+const MSTATE={installed:'ok',downloading:'warn',missing:'bad',optional_missing:'unknown'};
 const PHASE={idle:'ว่าง',reading:'กำลังอ่าน prompt',generating:'กำลังสร้างคำตอบ',loading:'กำลังโหลดโมเดล',unknown:'ไม่ทราบ'};
 let report=null,busy=false;
 function yes(v){return v===true?'ใช่':v===false?'ไม่':esc(v??'-')}
@@ -76,6 +77,9 @@ const RENDER={
   ollama_config:d=>kv([['MAX_LOADED ที่รันอยู่',esc(d.max_loaded_running)],['MAX_LOADED ในรีจิสทรี',esc(d.max_loaded_registry)],['ค่าที่ควรเป็น',esc(d.max_loaded_expected)],
     ['NUM_PARALLEL',esc(d.num_parallel)],['CONTEXT_LENGTH',esc(d.context_length)],['อุปกรณ์ของ runner',esc((d.runner_devices||[]).join(', ')||'CPU')],['layer บน GPU',esc(d.runner_offload)],
     ['VRAM ที่ใช้',d.vram_mb!=null?d.vram_mb+' MB':null],['Ollama เริ่มเมื่อ',esc(d.server_started)],['เป้าหมาย',`ทาง ${esc(d.target_path)}`]]),
+  models:d=>table(['โมเดล','สถานะ','ใช้โดย'],(d.models||[]).map(m=>[esc(m.model),badge(MSTATE[m.state]||'unknown',m.state_th||m.state||'-')+(m.queue_state?`<div class="small muted">คิว ${esc(m.queue_job)}: ${esc(m.queue_state)}${m.queue_updated?' · อัปเดต '+esc(m.queue_updated):''}${m.queue_process_alive===false?' · โปรเซสไม่อยู่แล้ว':''}</div>`:''),esc((m.used_by||[]).join(' · '))]))
+    +((d.installed||[]).length?`<div class="note" style="margin-top:8px">ใน Ollama ตอนนี้: ${esc(d.installed.join(', '))}</div>`:'')
+    +((d.sources||[]).some(s=>s.error)?`<div class="note">อ่านไม่ได้: ${esc(d.sources.filter(s=>s.error).map(s=>s.file).join(', '))}</div>`:''),
   display:d=>table(['การ์ด','สถานะ','Code','ไดรเวอร์'],(d.adapters||[]).map(a=>[esc(a.name)+(a.pci?` <span class="muted small">${esc(a.pci)}</span>`:''),esc(a.present?a.status:'ไม่ได้เสียบ'),esc(a.problem_code),a.driver_branch?esc(a.driver_branch.toFixed(2)):'-'])),
   disk:d=>table(['ไดรฟ์','ว่าง','ทั้งหมด','ใช้ไป'],(d.drives||[]).map(x=>[esc(x.drive),x.free_gb!=null?x.free_gb+' GB':'-',x.total_gb!=null?x.total_gb+' GB':'-',x.used_percent!=null?x.used_percent+'%':'-'])),
   channels:d=>table(['ช่องทาง','เชื่อมต่อ','สถานะ','ต่อได้ล่าสุด','หลุดถาวรวันนี้','error วันนี้'],(d.channels||[]).map(c=>[esc(c.label),c.connected===undefined?'-':`<span class="dot ${c.connected?'on':'off'}"></span>${yes(c.connected)}`,esc(c.healthState||c.lifecycle||'-')+(c.lastError?`<div class="small muted">${esc(c.lastError)}</div>`:''),esc(c.lastConnectedAt||'-'),c.terminal_disconnects_today?`${c.terminal_disconnects_today} (ล่าสุด ${esc(c.last_terminal_disconnect)})`:'0',esc(c.errors_today)]))

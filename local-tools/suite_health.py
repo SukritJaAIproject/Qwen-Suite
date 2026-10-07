@@ -16,6 +16,7 @@ Usage:  python suite_health.py [--json] [--only ports,ollama,...] [--fresh]
 from __future__ import annotations
 
 import argparse
+import ast
 import ctypes
 import json
 import os
@@ -29,6 +30,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, wait
 from ctypes import wintypes
@@ -641,6 +643,419 @@ def check_ollama_config(ctx: dict) -> dict:
                    **details)
 
 
+# --------------------------------------------------------------------------- referenced models (added 2026-10-06)
+
+# The model download queue of the 1.6.1 pipeline (Run-ModelJob.ps1 writes <job>.json there).
+MODEL_QUEUE = SUITE_ROOT / "data" / "model-queue"
+# job name -> the Ollama tag it installs; a job's note does not always name its model
+QUEUE_JOB_MODELS = {"muse": "muse-glimmer:30b", "granite": "granite4.2:8b"}
+_QUEUE_FINAL = ("done", "failed", "error")
+# A model tag such as qwen3.8:27b or hf.co/org/name:Q4_K_M. The letter required before the
+# colon keeps host:port pairs (127.0.0.1:11434) and clock times out.
+_TAG = r"(?=[^:\s'\"]*[A-Za-z])[A-Za-z0-9][\w.\-/]*:[\w.\-]+"
+_RE_TAG = re.compile(_TAG)
+_RE_ROUTER_CONST = re.compile(r"[A-Z][A-Z0-9_]*_MODEL")
+# PowerShell one token at a time: a quoted string, a <# block #> or # line comment, a line break, any other character
+_RE_PS_TOKEN = re.compile(r"'(?:[^']|'')*'|\"(?:[^\"`]|`.)*\"|<#.*?#>|#[^\n]*|\n|\S", re.S)
+_RE_ROUTER_PROFILE = re.compile(
+    r"[\"'](qwen-[\w.\-]+?)(?::latest)?[\"']\s*:\s*\{[^{}]*?[\"']target[\"']\s*:\s*([A-Z][A-Z0-9_]*)\b")
+MODEL_STATE_TH = {"installed": "มีแล้ว", "downloading": "กำลังดาวน์โหลด", "missing": "ไม่มีใน Ollama",
+                  "optional_missing": "ไม่มี (ไม่บังคับ)"}
+
+
+def _norm_tag(name: Any) -> str:
+    name = _model_name(str(name or "").strip()).lower()
+    return name if ":" in name.rsplit("/", 1)[-1] else name + ":latest"
+
+
+def _py_assigned(nodes: Any) -> dict[str, list[ast.expr]]:
+    """Name -> every expression assigned to it (NAME = ... or NAME: type = ...) among these nodes."""
+    names: dict[str, list[ast.expr]] = {}
+    for node in nodes:
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, value = [node.target], node.value
+        else:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                names.setdefault(target.id, []).append(value)
+    return names
+
+
+def _py_tags(node: ast.expr, names: dict[str, list[ast.expr]], seen: set[str] | None = None) -> list[str]:
+    """The model tags an expression can evaluate to: string literals, both branches of an
+    if-else, `a or b`, tuple/list items, the default of os.environ.get()/os.getenv(), and
+    names assigned in the same file. Comments and docstrings are never read; anything
+    computed (f-strings, other calls) gives nothing, so the caller can report it unreadable."""
+    seen = set() if seen is None else seen
+    if isinstance(node, ast.Constant):
+        value = node.value.strip() if isinstance(node.value, str) else ""
+        return [value] if _RE_TAG.fullmatch(value) else []
+    if isinstance(node, ast.Name):
+        if node.id in seen:
+            return []
+        seen.add(node.id)
+        return [tag for value in names.get(node.id, ()) for tag in _py_tags(value, names, seen)]
+    if isinstance(node, ast.IfExp):
+        parts = [node.body, node.orelse]
+    elif isinstance(node, ast.BoolOp):
+        parts = list(node.values)
+    elif isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        parts = list(node.elts)
+    elif isinstance(node, ast.Starred):
+        parts = [node.value]
+    elif isinstance(node, ast.Call):
+        func = node.func
+        owner = func.value if isinstance(func, ast.Attribute) else None
+        name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else ""
+        environ = (isinstance(owner, ast.Attribute) and owner.attr == "environ") or (
+            isinstance(owner, ast.Name) and owner.id == "environ")
+        if not (name == "getenv" or (name == "get" and environ)):
+            return []
+        parts = list(node.args[1:2]) + [kw.value for kw in node.keywords if kw.arg == "default"]
+    else:
+        return []
+    return [tag for part in parts for tag in _py_tags(part, names, seen)]
+
+
+def _refs_router(text: str) -> list[tuple[str, str]]:
+    """GENERAL_MODEL, CODE_MODEL, AGENT_MODEL, STRUCTURED_MODEL ... (module level) - not the
+    LEGACY_* fallbacks, which are optional by design. A constant whose value cannot be read
+    comes back with an empty tag, so the check says so instead of skipping it."""
+    profiles: dict[str, list[str]] = {}
+    for m in _RE_ROUTER_PROFILE.finditer(text):
+        profiles.setdefault(m.group(2), []).append(m.group(1))
+    names = _py_assigned(ast.parse(text).body)
+    refs = []
+    for const in names:
+        if const.startswith("LEGACY_") or not _RE_ROUTER_CONST.fullmatch(const):
+            continue
+        uses = profiles.get(const)
+        label = f"router {const}" + (f" ({', '.join(uses)})" if uses else "")
+        tags = _py_tags(ast.Name(id=const, ctx=ast.Load()), names)
+        refs += [(tag, label) for tag in tags] or [("", label)]
+    return refs
+
+
+def _refs_video(text: str) -> list[tuple[str, str]]:
+    # every `storyboard_model = ...` in the file; names are looked up anywhere in the file
+    names = _py_assigned(ast.walk(ast.parse(text)))
+    return [(tag, "Video Studio storyboard") for tag in _py_tags(ast.Name(id="storyboard_model", ctx=ast.Load()), names)]
+
+
+def _refs_research(text: str) -> list[tuple[str, str]]:
+    names = _py_assigned(ast.parse(text).body)
+    return [(tag, "Research PREFERRED_MODELS") for tag in _py_tags(ast.Name(id="PREFERRED_MODELS", ctx=ast.Load()), names)]
+
+
+def _refs_codex_known(text: str) -> list[tuple[str, str]]:
+    """$KnownModels = @('a', 'b') or $KnownModels = 'a', 'b' (also over several lines);
+    commented-out entries are not counted."""
+    m = re.search(r"^[ \t]*\$KnownModels[ \t]*=", text, re.M | re.I)
+    if not m:
+        return []
+    refs, depth, prev = [], 0, None
+    for tok in _RE_PS_TOKEN.finditer(text, m.end()):
+        t = tok.group(0)
+        if t.startswith("#") or t.startswith("<#"):
+            continue
+        if t == "\n":
+            if depth == 0 and prev not in (None, ","):
+                break  # end of the statement (a line ending in a comma continues the array)
+            continue
+        if t[0] in "'\"" and len(t) > 1:
+            if _RE_TAG.fullmatch(t[1:-1].strip()):
+                refs.append((t[1:-1].strip(), "Codex bridge $KnownModels"))
+        elif t == "(":
+            depth += 1
+        elif t == ")":
+            depth -= 1
+            if depth <= 0:
+                break
+        prev = t
+    return refs
+
+
+def _refs_codex_config(text: str) -> list[tuple[str, str]]:
+    data = json.loads(text)
+    refs = []
+    for key in ("default_model", "review_model"):  # the only keys used; no other value is reported
+        value = data.get(key) if isinstance(data, dict) else None
+        if isinstance(value, str) and _RE_TAG.fullmatch(value.strip()):
+            refs.append((value.strip(), f"Codex bridge {key}"))
+    return refs
+
+
+def _refs_embedding_env(text: str) -> list[tuple[str, str]]:
+    m = re.search(r"\$env:RAG_EMBEDDING_MODEL\s*=\s*[\"'](" + _TAG + r")[\"']", text, re.I)
+    return [(m.group(1), "Knowledge/RAG ของ Open WebUI (embedding)")] if m else []
+
+
+def _refs_embedding_config(text: str) -> list[tuple[str, str]]:
+    m = re.search(r"[\"']rag\.embedding_model[\"']\s*:\s*[\"'](" + _TAG + r")[\"']", text)
+    return [(m.group(1), "Knowledge/RAG ของ Open WebUI (embedding)")] if m else []
+
+
+# (file under the suite root, reader, "all" = every name must be installed, "any" = one is enough)
+MODEL_SOURCES: tuple[tuple[str, Callable[[str], list[tuple[str, str]]], str], ...] = (
+    ("ai-services/router.py", _refs_router, "all"),
+    ("local-tools/video_worker.py", _refs_video, "all"),
+    ("local-tools/research_worker.py", _refs_research, "any"),
+    ("local-tools/codex/Invoke-QwenCodex.ps1", _refs_codex_known, "all"),
+    ("data/codex-bridge.json", _refs_codex_config, "all"),
+    ("start-webui.ps1", _refs_embedding_env, "all"),
+    ("Configure-Qwen-WebUI.py", _refs_embedding_config, "all"),
+)
+
+
+def _read_shared(path: Path, limit: int = 64 * 1024) -> bytes:
+    """Read a small file opened with FILE_SHARE_DELETE, so a writer that swaps it in with
+    File.Replace (the queue jobs do) can never fail because this check had it open."""
+    if os.name != "nt":
+        with path.open("rb") as fh:
+            return fh.read(limit)
+    import msvcrt
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                     wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    # GENERIC_READ, FILE_SHARE_READ|WRITE|DELETE, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL
+    handle = kernel32.CreateFileW(str(path), 0x80000000, 0x7, None, 3, 0x80, None)
+    if not handle or handle == wintypes.HANDLE(-1).value:
+        raise OSError(ctypes.get_last_error(), "CreateFileW failed")
+    try:
+        fd = msvcrt.open_osfhandle(handle, os.O_RDONLY)
+    except OSError:
+        kernel32.CloseHandle(handle)
+        raise
+    with os.fdopen(fd, "rb") as fh:  # closing the file closes the handle
+        return fh.read(limit)
+
+
+def _queue_job_alive(pid: Any, updated: float | None) -> bool | None:
+    """True only while the pid is still the PowerShell that wrote the job file. Windows reuses
+    PIDs, so after a crash or a reboot an unrelated process can hold the same number: it must
+    be powershell.exe/pwsh.exe and must have started before the file's last update."""
+    if not pid:
+        return None
+    try:
+        import psutil
+        proc = psutil.Process(int(pid))
+        if proc.name().lower() not in ("powershell.exe", "pwsh.exe"):
+            return False
+        # 'updated' has whole seconds; the slack also covers a small clock correction
+        return updated is None or proc.create_time() <= updated + 300
+    except Exception as exc:
+        return False if type(exc).__name__ in ("NoSuchProcess", "ZombieProcess") else None
+
+
+def _model_queue(unreadable: list[str] | None = None) -> dict[str, dict[str, Any]]:
+    """Normalised model tag -> its job in the download queue. Read-only; job, state and times only.
+    The name of each job file that could not be read or parsed is added to `unreadable`."""
+    jobs: dict[str, dict[str, Any]] = {}
+    try:
+        paths = sorted(MODEL_QUEUE.glob("*.json"))[:20]
+    except OSError:
+        return jobs
+    for path in paths:
+        try:
+            data = json.loads(_read_shared(path).decode("utf-8-sig", "replace"))
+        except Exception:
+            if unreadable is not None:
+                unreadable.append(path.stem.lower())
+            continue  # being swapped in this instant, or not a job file
+        if not isinstance(data, dict):
+            continue
+        job = str(data.get("job") or path.stem)
+        tags = [QUEUE_JOB_MODELS[k] for k in {job.lower(), path.stem.lower()} if k in QUEUE_JOB_MODELS]
+        tags += _RE_TAG.findall(str(data.get("note") or ""))
+        if not tags:
+            continue  # e.g. the Qwen-Image weights job: not an Ollama model
+        updated = _iso_to_ts(str(data.get("updated") or ""))
+        info = {"job": _redact(job, 30), "state": _redact(str(data.get("state") or "?"), 30).lower(),
+                "updated": _fmt_time(updated), "process_alive": _queue_job_alive(data.get("pid"), updated)}
+        for tag in tags:
+            jobs.setdefault(_norm_tag(tag), info)
+    return jobs
+
+
+def check_models(ctx: dict) -> dict:
+    """Every model the suite names in its code and config against Ollama's /api/tags (which
+    lists what is on disk and loads nothing). A model whose queue job is still running is
+    'downloading' (warn), not missing."""
+    try:
+        return _check_models()
+    except Exception as exc:  # this check must never break the page
+        return _result(UNKNOWN, "ตรวจรายชื่อโมเดลไม่สำเร็จ: " + _redact(f"{type(exc).__name__}: {exc}", 100))
+
+
+def _tags_error(exc: Exception) -> str:
+    """Why /api/tags gave no list - a timeout, a closed port and a bad answer read differently."""
+    reason = getattr(exc, "reason", None)
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"Ollama ตอบ /api/tags ผิดปกติ (HTTP {exc.code})"
+    if isinstance(exc, ValueError):
+        return f"Ollama ตอบ /api/tags ผิดรูปแบบ ({type(exc).__name__})"
+    if isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError):
+        return "Ollama ไม่ตอบ /api/tags ภายใน 3 วินาที"
+    if isinstance(reason, ConnectionRefusedError) or not _port_open(11434):
+        return "Ollama ไม่ได้รัน (พอร์ต 11434 ปิด)"
+    return f"เรียก Ollama /api/tags ไม่สำเร็จ ({type(reason or exc).__name__})"
+
+
+# Optional source: missing, or holding no model tag (its values may be words such as "auto"), is fine.
+_OPTIONAL_MODEL_SOURCES = {"data/codex-bridge.json"}
+# str(path) -> ((mtime_ns, size), names read): parsing research_worker.py alone takes ~50 ms
+_MODEL_SOURCE_CACHE: dict[str, tuple[tuple[int, int], list[tuple[str, str]]]] = {}
+
+
+def _check_models() -> dict:
+    refs: dict[str, dict[str, Any]] = {}
+    groups: list[tuple[str, list[str]]] = []
+    sources: list[dict[str, Any]] = []
+    for rel, reader, mode in MODEL_SOURCES:
+        path = SUITE_ROOT / rel
+        item: dict[str, Any] = {"file": rel, "found": 0}
+        sources.append(item)
+        try:
+            if not path.is_file():
+                item["missing"] = True
+                if rel not in _OPTIONAL_MODEL_SOURCES:
+                    item["error"] = "ไม่พบไฟล์"
+                continue
+            st = path.stat()
+            if st.st_size > 4 * 2**20:
+                raise ValueError("file too large")
+            stamp = (st.st_mtime_ns, st.st_size)
+            cached = _MODEL_SOURCE_CACHE.get(str(path))
+            if cached and cached[0] == stamp:
+                found = cached[1]
+            else:
+                found = reader(path.read_text(encoding="utf-8-sig", errors="replace"))
+                _MODEL_SOURCE_CACHE[str(path)] = (stamp, found)
+        except Exception as exc:
+            item["error"] = type(exc).__name__
+            continue
+        unresolved = [label for tag, label in found if not tag]
+        found = [(tag, label) for tag, label in found if tag]
+        item["found"] = len(found)
+        if unresolved:
+            item["error"] = "อ่านค่าไม่ได้: " + ", ".join(unresolved)
+        elif not found and rel not in _OPTIONAL_MODEL_SOURCES:
+            item["error"] = "ไม่พบชื่อโมเดล"
+        keys = []
+        for tag, label in found:
+            key = _norm_tag(tag)
+            row = refs.setdefault(key, {"model": tag[:80], "used_by": [], "required": False})
+            if label not in row["used_by"]:
+                row["used_by"].append(label)
+            row["required"] = row["required"] or mode == "all"
+            keys.append(key)
+        if mode == "any" and keys:
+            groups.append((found[0][1], keys))
+    if not refs:
+        return _result(UNKNOWN, "ไม่พบชื่อโมเดลในไฟล์ของชุด (รูปแบบไฟล์อาจเปลี่ยนไป)", sources=sources)
+    try:
+        data = _http_json(OLLAMA + "/api/tags", timeout=3)
+        if not isinstance(data, dict):
+            raise ValueError("not a JSON object")
+    except Exception as exc:
+        return _result(UNKNOWN, _tags_error(exc) + " — เทียบรายชื่อโมเดลไม่ได้",
+                       models=[{"model": r["model"], "used_by": r["used_by"]} for r in refs.values()], sources=sources)
+    installed: dict[str, str] = {}
+    for m in data.get("models") or []:
+        if isinstance(m, dict):
+            for field in ("name", "model"):
+                if m.get(field):
+                    installed.setdefault(_norm_tag(m[field]), str(m.get("name") or m[field])[:80])
+
+    def read_queue() -> tuple[dict[str, dict[str, Any]], list[str]]:
+        unreadable: list[str] = []
+        try:
+            return _model_queue(unreadable), unreadable
+        except Exception:
+            return {}, unreadable
+
+    # Run-ModelJob.ps1 swaps a job file in with File.Replace: for about a millisecond the file can
+    # be absent or locked. Look again (twice, 0.1 s apart) before calling a model missing.
+    queue, unreadable = read_queue()
+    job_tags = {_norm_tag(tag) for tag in QUEUE_JOB_MODELS.values()}
+    for _ in range(2):
+        if not any(k not in installed and k not in queue and (k in job_tags or unreadable) for k in refs):
+            break
+        time.sleep(0.1)
+        more, unreadable = read_queue()
+        for k, v in more.items():
+            queue.setdefault(k, v)
+    for stem in unreadable:  # a known job whose file still cannot be read: its state is unknown, not "missing"
+        if stem in QUEUE_JOB_MODELS:
+            queue.setdefault(_norm_tag(QUEUE_JOB_MODELS[stem]),
+                             {"job": stem, "state": "อ่านไฟล์คิวไม่ได้", "updated": None, "process_alive": None})
+    rows: list[dict[str, Any]] = []
+    for key, ref in refs.items():
+        job = queue.get(key)
+        if key in installed:
+            state = "installed"
+        elif job and job["state"] not in _QUEUE_FINAL:
+            state = "downloading"
+        else:
+            state = "missing" if ref["required"] else "optional_missing"
+        row = {"model": ref["model"], "state": state, "state_th": MODEL_STATE_TH[state],
+               "used_by": ref["used_by"], "required": ref["required"]}
+        if job and state != "installed":
+            row.update(queue_job=job["job"], queue_state=job["state"], queue_updated=job["updated"],
+                       queue_process_alive=job["process_alive"])
+        rows.append(row)
+    order = {"missing": 0, "downloading": 1, "optional_missing": 2, "installed": 3}
+    rows.sort(key=lambda r: (order[r["state"]], r["model"]))
+
+    def who(row: dict[str, Any]) -> str:
+        used = row["used_by"]
+        return "; ".join(used[:2]) + (" …" if len(used) > 2 else "")
+
+    status, bits = OK, []
+    missing = [r for r in rows if r["state"] == "missing"]
+    pending = [r for r in rows if r["state"] == "downloading" and r["required"]]
+    if missing:
+        status = BAD
+        bits.append("ไม่มีใน Ollama: " + ", ".join(
+            f"{r['model']} ({who(r)})" + (" คิวดาวน์โหลดล้มเหลว" if r.get("queue_state") in ("failed", "error") else "")
+            for r in missing) + " — ต้อง ollama pull หรือแก้ชื่อโมเดลในไฟล์ที่อ้างถึง")
+    if pending:
+        status = WARN if status == OK else status
+        txt = "กำลังดาวน์โหลด: " + ", ".join(f"{r['model']} ({who(r)})" for r in pending)
+        if any(r.get("queue_process_alive") is False for r in pending):
+            txt += " — แต่โปรเซสของคิวไม่อยู่แล้ว ดาวน์โหลดอาจหยุดไป"
+        else:
+            txt += " — ใช้ได้เมื่อโหลดเสร็จ"
+        bits.append(txt)
+    for label, keys in groups:
+        if any(k in installed for k in keys):
+            continue
+        if any(queue.get(k) and queue[k]["state"] not in _QUEUE_FINAL for k in keys):
+            status = WARN if status == OK else status
+            bits.append(f"{label}: ยังไม่มีตัวไหนติดตั้งเสร็จ (รอดาวน์โหลด)")
+        else:
+            status = BAD
+            bits.append(f"{label}: ไม่มีตัวไหนติดตั้งเลย ต้องมีอย่างน้อย 1 ตัว")
+    unread = [s for s in sources if s.get("error")]
+    if unread:  # a source that stops matching must not drop out silently and leave the check "ok"
+        status = WARN if status == OK else status
+        bits.append("อ่านชื่อโมเดลจาก " + ", ".join(f"{s['file']} ({s['error']})" for s in unread)
+                    + " ไม่ได้ (รูปแบบไฟล์อาจเปลี่ยน) จึงยังไม่ได้ตรวจโมเดลที่ไฟล์นั้นอ้างถึง")
+    required = [r for r in rows if r["required"]]
+    have = sum(1 for r in required if r["state"] == "installed")
+    names = sorted(set(installed.values()))
+    details = {"models": rows, "installed": names, "required_installed": have, "required_total": len(required),
+               "sources": sources}
+    if status == OK:
+        return _result(OK, f"ติดตั้งครบ {len(required)} โมเดลที่ชุดเรียกใช้ · ใน Ollama มี {len(names)} โมเดล", **details)
+    return _result(status, f"ติดตั้งแล้ว {have}/{len(required)} โมเดลที่ชุดเรียกใช้ · " + " · ".join(bits), **details)
+
+
 # --------------------------------------------------------------------------- display adapters
 
 _PNP_SCRIPT = r"""
@@ -1200,6 +1615,7 @@ CHECKS: dict[str, dict[str, Any]] = {
     "ports": {"title": "บริการ/พอร์ต", "fn": check_ports, "ttl": 5},
     "ollama": {"title": "Ollama ตอนนี้", "fn": check_ollama, "ttl": 5},
     "ollama_config": {"title": "ค่าของ Ollama / GPU (ทาง B)", "fn": check_ollama_config, "ttl": 15},
+    "models": {"title": "โมเดลที่ชุดเรียกใช้", "fn": check_models, "ttl": 60},
     "display": {"title": "การ์ดจอ", "fn": check_display, "ttl": 120, "heavy": True},
     "disk": {"title": "พื้นที่ดิสก์", "fn": check_disk, "ttl": 15},
     "channels": {"title": "Telegram / WhatsApp", "fn": check_channels, "ttl": 30, "heavy": True},
