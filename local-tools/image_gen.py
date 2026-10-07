@@ -64,6 +64,17 @@ LOCAL_PACK_ROOT = SUITE_ROOT / "optional" / "qwen-image-2.1"
 LOCAL_PYTHON = LOCAL_PACK_ROOT / "venv" / "Scripts" / "python.exe"
 LOCAL_WORKER = LOCAL_PACK_ROOT / "worker.py"
 LOCAL_MODEL = SUITE_ROOT / "model-cache" / "Qwen-Image-2.1"
+# Written by Install-QwenImage.ps1 only after `worker.py --check` passed (CUDA GPU found). A model
+# folder alone is not proof: an interrupted download leaves model_index.json behind.
+LOCAL_INSTALL_RECORD = LOCAL_PACK_ROOT / "install.json"
+# Local worker errors that mean the pack cannot run on this machine right now; only these let
+# provider=auto fall back to Runway.
+_LOCAL_UNAVAILABLE = re.compile(r"CUDA|out of memory|OutOfMemory|no GPU|nvidia", re.I)
+
+
+def _shorten(text: str, limit: int) -> str:
+    """Keep the start and the end: a worker's real error is its last stderr line."""
+    return text if len(text) <= limit else text[:60] + " ... " + text[-(limit - 65):]
 
 
 def _api_key() -> tuple[str, str]:
@@ -320,7 +331,8 @@ def _generate_runway(out_dir: Path, prompt: str = "", ratio: Any = "16:9", outpu
 
 def local_status() -> dict[str, Any]:
     """Report optional-pack readiness without importing Torch or Diffusers into this service."""
-    missing = [str(path) for path in (LOCAL_PYTHON, LOCAL_WORKER, LOCAL_MODEL / "model_index.json") if not path.is_file()]
+    required = (LOCAL_PYTHON, LOCAL_WORKER, LOCAL_MODEL / "model_index.json", LOCAL_INSTALL_RECORD)
+    missing = [str(path) for path in required if not path.is_file()]
     return {
         "installed": not missing,
         "provider": "qwen-image-2.1-local",
@@ -334,15 +346,17 @@ def _generate_local(out_dir: Path, prompt: str, ratio: Any, output_name: str, re
                     quality: str, timeout: float, seed: int | None) -> dict[str, Any]:
     status = local_status()
     if not status["installed"]:
-        return {
-            "status": "not_configured",
-            "provider": "local",
-            "message": (
+        if status["missing"] == [str(LOCAL_INSTALL_RECORD)]:
+            message = (
+                "Qwen-Image 2.1 is downloaded but its installer's CUDA GPU check has not passed, so it is not enabled. "
+                "It needs an NVIDIA GPU with the CUDA build of PyTorch; see logs\\qwen-image-install-*.log."
+            )
+        else:
+            message = (
                 "Qwen-Image 2.1 optional pack is not installed. Extract the separate optional-pack ZIP and run "
                 "Install-Qwen-Image-2.1.cmd; the main Qwen Suite installer intentionally does not include these weights."
-            ),
-            "missing": status["missing"],
-        }
+            )
+        return {"status": "not_configured", "provider": "local", "message": message, "missing": status["missing"]}
     prompt = str(prompt or "").strip()
     if not prompt:
         raise ValueError("prompt is required (describe the picture; English usually works best)")
@@ -428,19 +442,43 @@ def _generate_local(out_dir: Path, prompt: str, ratio: Any, output_name: str, re
 def generate(out_dir: Path, prompt: str = "", ratio: Any = "16:9", output_name: str = "", reference_image: Any = "",
              task_id: str = "", quality: str = "720p", timeout: float = TIMEOUT, http=None,
              sleep: Callable[[float], None] = time.sleep, provider: str = "auto", seed: int | None = None) -> dict[str, Any]:
-    """Use the optional local Qwen pack when ready, otherwise preserve the Runway workflow."""
+    """Use the optional local Qwen pack when ready, otherwise preserve the Runway workflow.
+
+    provider=auto falls back to Runway only when the installed local pack cannot run on this machine
+    right now (no CUDA GPU, eGPU unplugged, out of GPU memory) and the request made no local-only
+    promise (no seed, no local reference image, which must not be uploaded). Input errors and
+    timeouts are reported instead of being retried in the cloud. provider=local never falls back."""
     provider = str(provider or "auto").strip().lower()
     if provider not in {"auto", "local", "runway"}:
         raise ValueError("provider must be auto, local, or runway")
     if task_id and provider == "local":
         raise ValueError("task_id is only used by the Runway provider")
-    use_local = provider == "local" or (provider == "auto" and not task_id and local_status()["installed"])
-    if use_local:
+    if provider == "local":
         return _generate_local(out_dir, prompt, ratio, output_name, reference_image, quality, timeout, seed)
-    result = _generate_runway(
-        out_dir, prompt, ratio=ratio, output_name=output_name, reference_image=reference_image,
-        task_id=task_id, quality=quality, timeout=timeout, http=http, sleep=sleep,
-    )
+    reference = str(reference_image or "").strip()
+    url_reference = bool(re.match(r"(?i)^[a-z][a-z0-9+.-]*://", reference))  # only Runway takes URLs
+    local_error = ""
+    if provider == "auto" and not task_id and not url_reference and local_status()["installed"]:
+        try:
+            return _generate_local(out_dir, prompt, ratio, output_name, reference_image, quality, timeout, seed)
+        except RuntimeError as exc:
+            if seed is not None or reference or not _LOCAL_UNAVAILABLE.search(str(exc)):
+                raise
+            local_error = _shorten(f"{type(exc).__name__}: {exc}", 600)
+    try:
+        result = _generate_runway(
+            out_dir, prompt, ratio=ratio, output_name=output_name, reference_image=reference_image,
+            task_id=task_id, quality=quality, timeout=timeout, http=http, sleep=sleep,
+        )
+    except Exception as exc:
+        if not local_error:
+            raise
+        raise RuntimeError(_shorten(
+            f"Qwen-Image 2.1 could not run here ({local_error}); the Runway fallback also failed: "
+            f"{type(exc).__name__}: {exc}", 1500)) from None
+    if local_error:
+        verb = "used" if result.get("status") == "created" else "tried"
+        result["local_fallback"] = f"Qwen-Image 2.1 could not run here, so Runway was {verb} instead: {local_error}"
     if provider == "auto" and result.get("status") == "not_configured":
         result["local_optional_pack"] = local_status()
     return result

@@ -2562,7 +2562,7 @@ def generate_image(
     provider: Literal["auto", "local", "runway"] = "auto",
     seed: int = -1,
 ) -> str:
-    """Create a picture in the project outputs folder. provider=auto uses the separate local Qwen-Image 2.1 optional pack when installed, otherwise Runway gen4_image; local keeps prompts/files on the machine and spends no credits, runway sends them to the cloud and spends 5 credits at 720p or 8 at 1080p. ratio: 16:9 | 1:1 | 9:16 (also 4:3, 3:4). reference_image: a project image (or https URL for Runway) relative to path_alias. seed >= 0 makes local generation repeatable. task_id is Runway-only and fetches a timed-out picture without new credits. status=not_configured: relay the setup message. On Telegram end with MEDIA:<telegram_attachment>."""
+    """Create a picture in the project outputs folder. provider=auto uses the separate local Qwen-Image 2.1 optional pack when installed, otherwise Runway gen4_image, and falls back to Runway only if the installed pack cannot run here (no CUDA GPU or out of GPU memory) and no seed or local reference image was given (the result then has local_fallback); local keeps prompts/files on the machine and spends no credits, runway sends them to the cloud and spends 5 credits at 720p or 8 at 1080p. ratio: 16:9 | 1:1 | 9:16 (also 4:3, 3:4). reference_image: a project image (or https URL for Runway) relative to path_alias. seed >= 0 makes local generation repeatable. task_id is Runway-only and fetches a timed-out picture without new credits. status=not_configured: relay the setup message. On Telegram end with MEDIA:<telegram_attachment>."""
     import image_gen
 
     project_dir, manifest = _output_project(project)

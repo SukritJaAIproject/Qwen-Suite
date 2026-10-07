@@ -89,7 +89,7 @@ CATALOG = {
     },
     "screen": {
         "capture_screen": "action | project?, monitor=(all|primary|1|2..)?, region? ('x0,y0,x1,y1' px or 0-1 fractions, e.g. 0,0,0.5,1), output_name?; PNG of the owner's desktop in outputs; only when the owner asks, it may show private work; on Telegram end the reply with MEDIA:<telegram_attachment>",
-        "generate_image": "action | prompt, ratio=(16:9|1:1|9:16|4:3|3:4)?, project?, output_name?, reference_image? (project file; https URL only for Runway), path_alias?, quality=(720p|1080p)?, provider=(auto|local|runway)?, seed? (local), task_id? (Runway resume); auto prefers the separate local Qwen-Image 2.1 pack when installed, otherwise Runway; local uses no credits and keeps inputs on-device; on Telegram end with MEDIA:<telegram_attachment>",
+        "generate_image": "action | prompt, ratio=(16:9|1:1|9:16|4:3|3:4)?, project?, output_name?, reference_image? (project file; https URL only for Runway), path_alias?, quality=(720p|1080p)?, provider=(auto|local|runway)?, seed? (local), task_id? (Runway resume); auto prefers the separate local Qwen-Image 2.1 pack when installed, otherwise Runway, and falls back to Runway (cloud, credits) only if that pack cannot run here (no CUDA GPU or out of GPU memory) and no seed or local reference was given; local uses no credits and keeps inputs on-device; on Telegram end with MEDIA:<telegram_attachment>",
     },
     "media": {
         "generate_video": "action | project, prompt, duration_seconds?, aspect_ratio=(9:16|16:9|1:1)?, style?, language?, voice?, output_name?, title?, notify?; one-call storyboard+TTS+music+render+QA; the owner gets one message when it ends",
