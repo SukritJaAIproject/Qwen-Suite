@@ -4,9 +4,24 @@
 
 - `qwen-agent:latest` และ `qwen-review:latest` ใช้ `muse-glimmer:30b` สำหรับ tools, agent workflow และ Second Opinion
 - `qwen-fast:latest` และ `qwen-structured:latest` ใช้ `granite4.2:8b` สำหรับงานสั้น, JSON/schema/extraction และ RAG; embedding ยังเป็น `qwen3-embedding:4b`
-- ถ้ายังไม่มีน้ำหนักใหม่ Router จะ fallback ไป `gpt-oss:20b` และ `qwen3:4b` โดยอัตโนมัติ ไม่ทำให้ระบบเดิมหยุด
-- `generate_image` ใช้ `provider=auto`: เลือก Qwen-Image 2.1 ในเครื่องเมื่อชุดเสริมแยกติดตั้งครบ มิฉะนั้นใช้ Runway แบบเดิม
+- `gpt-oss:20b` และ `qwen3:4b` ถูกลบออกจากเครื่องนี้แล้ว (5 ต.ค. 2026) ถ้า Muse หรือ Granite ยังไม่พร้อม Router จะ fallback ไป `qwen3.8:27b` แทน
+  และ Second Opinion อัตโนมัติจะปิดอยู่จนกว่าจะมี `muse-glimmer:30b` (สถานะ 6 ต.ค.: Granite ติดตั้งแล้ว ส่วน Muse ยังดาวน์โหลดอยู่)
+- `generate_image` ใช้ `provider=auto`: ใช้ Qwen-Image 2.1 ในเครื่องเฉพาะเมื่อมี `optional\qwen-image-2.1\install.json`
+  (ตัวติดตั้งชุดเสริมเขียนไฟล์นี้หลังตรวจ CUDA GPU ผ่านแล้วเท่านั้น มีแค่น้ำหนักโมเดลไม่นับว่าติดตั้ง) มิฉะนั้นใช้ Runway แบบเดิม ·
+  ถ้าชุดเสริมติดตั้งแล้วแต่ GPU ใช้ไม่ได้ตอนนั้น (ไม่มี CUDA, ถอด eGPU, หน่วยความจำ GPU ไม่พอ) จะ fallback ไป Runway (คลาวด์ เสียเครดิต)
+  เฉพาะคำขอที่ไม่ได้ระบุ `seed` และไม่มีภาพอ้างอิงในเครื่อง ถ้ามีจะแจ้งข้อผิดพลาดแทนและไม่ส่งไฟล์ขึ้นคลาวด์ · `provider=local` ไม่ fallback (แก้ 6 ต.ค. 2026)
 - Qwen-Image 2.1 ไม่อยู่ใน installer หลัก ต้องใช้ optional pack, ยอมรับ Qwen Research License และมีพื้นที่ว่างเพิ่มอย่างน้อย 50 GB
+  ต้องมี NVIDIA CUDA GPU และ PyTorch รุ่น CUDA (เครื่องนี้ตอนไม่มี eGPU เป็น CPU ล้วน จึงสร้างภาพในเครื่องไม่ได้) ·
+  Qwen Research License อนุญาตเฉพาะการใช้ที่ไม่ใช่เชิงพาณิชย์ (เพื่อวิจัยหรือประเมินผล) ใช้เชิงพาณิชย์ต้องขอ commercial license แยก
+- Video Studio (แก้ 6 ต.ค. 2026): ถ้าไม่มีการ์ด 24 GB storyboard ภาษาไทยใช้แม่แบบสำเร็จรูปทันที (วัดแล้ว Granite เขียนบรรยายไทยผิดไวยากรณ์ราวครึ่งหนึ่ง)
+  ส่วนภาษาอังกฤษใช้ `granite4.2:8b` โดย timeout ปรับตามจำนวนฉาก (30 + 40 วินาทีต่อฉาก สูงสุด 600 วินาที) · ถ้า Ollama กำลังใช้โมเดลอื่นอยู่ก็ใช้แม่แบบเช่นเดิม
+- Qwen Codex: ตัวเลือกโมเดลเหลือเฉพาะ `qwen3-coder:30b` (ถอด `gpt-oss:20b` ออกแล้ว จะเพิ่ม `muse-glimmer:30b` หลังทดสอบกับ tool call ของ Codex)
+- 1.6.1: หน้า Open WebUI ต้องล็อกอิน บัญชีเริ่มต้นอีเมล `admin@localhost` / `P@ssw0rd` ใช้ล็อกอินครั้งแรกครั้งเดียว แล้วเปลี่ยนรหัสทันทีที่ Settings > Account
+  (แก้ 6 ต.ค. 2026: ชุด 1 ต.ค. บันทึกอีเมลเป็น `admin` เฉย ๆ ซึ่งช่อง Email ของหน้าเว็บเป็น `type="email"` จึงไม่ยอมส่ง — ผ่านแค่ API ·
+  `Configure-Qwen-WebUI.py` รุ่นใหม่ย้ายอีเมลนั้นเป็น `admin@localhost` ทุกครั้งที่รันโดยไม่แตะรหัสผ่าน ·
+  **เครื่องนี้ ณ 6 ต.ค. ยังเป็น `admin`** จนกว่าจะรันสคริปต์นั้นอีกครั้ง (`--db E:\localllm\webui-data\webui.db` ซึ่งเขียนค่าตั้งอื่นทับด้วย) หรือแก้เฉพาะอีเมลของแถวนั้นในตาราง `user` และ `auth`)
+- ข้อจำกัดที่ทราบ: `local-tools\project_store.py` ยังล็อกอิน Open WebUI ด้วย `admin@localhost` / `admin` แบบสมัยปิดล็อกอิน
+  ตั้งแต่ 1.6.1 จึง sync โฟลเดอร์ ความจำ และไฟล์แนบของ Project เข้า Open WebUI ไม่ได้ (ไฟล์และ `MEMORY.md` ในเครื่องยังบันทึกครบ ได้แค่คำเตือน sync failed) — รอแก้ใน 1.6.2 เช่นให้ตัวติดตั้งออก API key ของเจ้าของเครื่องให้ local-tools
 
 หมายเหตุ: ตาราง benchmark และบันทึกวันที่เก่ากว่าด้านล่างเก็บไว้เป็นประวัติของฮาร์ดแวร์/โมเดลเดิม
 
@@ -44,7 +59,7 @@
 - ปิด thinking เป็นค่าเริ่มต้นเพื่อลดเวลารอ; เปิดกลับใน Model settings ได้เมื่อต้องการวิเคราะห์เชิงลึก
 - โปรไฟล์ Qwen ใช้ `Local Computer Fast` ซึ่งรวม 26 tools เป็น 2 gateway tools; Full tools ยังอยู่ในเมนูให้เลือกเอง
 - tool schema ลดจาก 13,077 เหลือ 907 ไบต์ (93.1%); รอบเรียก tool ผ่าน Open WebUI ลดจาก 141.8 เหลือ 104.0 วินาที
-- แชทยาวใน Open WebUI จะย่อบริบทเมื่อประมาณ 24,000 tokens ด้วย `qwen-fast` (`granite4.2:8b`; fallback เป็น `qwen3:4b` จนกว่าจะดาวน์โหลด Granite)
+- แชทยาวใน Open WebUI จะย่อบริบทเมื่อประมาณ 24,000 tokens ด้วย `qwen-fast` (`granite4.2:8b`; ถ้า Granite ไม่อยู่ Router จะใช้ `qwen3.8:27b` แทน — `qwen3:4b` ถูกลบแล้ว 5 ต.ค. 2026)
 - benchmark หลังปรับ: output median 1.58 tok/s และ 64 tokens ใช้เวลา median 41.82 วินาที (3 warm runs — วัด 12 ก.ย. ด้วย num_ctx 8192 / num_thread 12 เทียบกับผลหลัง 29 ก.ย. ตรง ๆ ไม่ได้)
 
 ### ตัวเลือก runner ต้องเหมือนกันทุกช่องทาง ("runner options") — แก้ 29 ก.ย. 2026
@@ -64,6 +79,8 @@ Ollama 0.32 เทียบค่าเหล่านี้ของคำข�
 - `shift:false` ของ OpenClaw ไม่มีผลกับ `qwen3.8` และ `gpt-oss` (llama-server ปิด KV-cache shift ของสองโมเดลนี้เอง และ OpenClaw ส่ง `truncate:false` ด้วย) จึงตัดทิ้งได้ ·
   สำหรับ `qwen3-coder:30b` / `qwen3:4b` ยังส่งต่อ เพราะถ้าเปิด shift คำตอบที่ล้น 32k จะตอบต่อโดยตัด system prompt และ tool schema ทิ้ง แทนที่จะหยุด —
   สองโมเดลนี้โหลดไม่บ่อย จึงยอมให้ reload เป็นครั้งคราว
+  (6 ต.ค. 2026: `gpt-oss:20b` และ `qwen3:4b` ถูกลบแล้ว · `granite4.2:8b` และ `muse-glimmer:30b` ไม่อยู่ในรายการตัด `shift` ของ router จึงส่งต่อเหมือน coder ·
+  ยังไม่ได้ตรวจว่า llama-server รองรับ KV-cache shift ของ Muse หรือไม่ — ดูหลัง Muse โหลดครั้งแรกใน `logs\ollama-server.log`)
 - ตรวจ: ใน `logs\ollama-server.log` ทุกบรรทัด `starting llama-server` ของโมเดลเดียวกันต้องมี `-c`, `-t` และ `--context-shift` แบบเดียวกัน
 - เพิ่มช่องทางใหม่ที่เรียก Ollama ตรง: ส่งค่าตามนี้ หรือส่งผ่าน router
 
@@ -90,8 +107,8 @@ Ollama 0.32 เทียบค่าเหล่านี้ของคำข�
 | โมเดล | ขนาด | CPU อย่างเดียว | CPU+GPU | คุณภาพภาษาไทย |
 |---|---|---|---|---|
 | **qwen3-coder:30b** | 18 GB | **11.0 tok/s** | 8.7 tok/s | ดีที่สุด — ตอบกระชับ ตรงคำสั่ง เขียนโค้ดครบ จบเอง |
-| gpt-oss:20b | 13 GB | 6.1 tok/s | 3.5 tok/s | พอใช้ แต่เผาโทเคนกับ reasoning จนมักตอบไม่จบ |
-| qwen3:4b | 2.5 GB | 8.8 tok/s | 2.7 tok/s | อ่อน — คิดเป็นภาษาอังกฤษวนไปเรื่อย ๆ แทนที่จะตอบ |
+| gpt-oss:20b (ลบแล้ว 5 ต.ค. 2026) | 13 GB | 6.1 tok/s | 3.5 tok/s | พอใช้ แต่เผาโทเคนกับ reasoning จนมักตอบไม่จบ |
+| qwen3:4b (ลบแล้ว 5 ต.ค. 2026) | 2.5 GB | 8.8 tok/s | 2.7 tok/s | อ่อน — คิดเป็นภาษาอังกฤษวนไปเรื่อย ๆ แทนที่จะตอบ |
 
 **สองข้อที่สวนสามัญสำนึก แต่วัดออกมาแล้วเป็นแบบนี้:**
 
@@ -100,8 +117,9 @@ Ollama 0.32 เทียบค่าเหล่านี้ของคำข�
 2. **GPU ทำให้ช้าลงทุกโมเดล** (33-248%) — P620 อ่อนเกินไป ต้นทุนสลับข้อมูล
    CPU↔GPU ทุก token แพงกว่าที่ GPU ช่วยคำนวณได้
 
-**ใช้ `qwen3-coder:30b` เป็นตัวหลัก** อีกสองตัวเป็นตัวสำรอง
-(หลังดาวน์โหลด Muse/Granite และทดสอบครบแล้ว หากยืนยันว่าไม่ต้องการ fallback เดิมจึงค่อยพิจารณา `ollama rm gpt-oss:20b qwen3:4b` เพื่อคืนประมาณ 15.5 GB)
+**ใช้ `qwen3-coder:30b` เป็นตัวหลัก** อีกสองตัวเคยเป็นตัวสำรอง
+(`gpt-oss:20b` และ `qwen3:4b` ถูกลบด้วย `ollama rm` ไปแล้วเมื่อ 5 ต.ค. 2026 ก่อนที่ Muse/Granite จะดาวน์โหลดเสร็จและก่อนทดสอบ ซึ่งข้ามขั้นตอนที่วางไว้เดิม —
+ไม่ต้องรัน `ollama rm` อีก · สองแถวในตารางเป็นประวัติเท่านั้น และไม่มีตัวเทียบเดิมให้ benchmark Muse/Granite แล้ว จึงเทียบกับ `qwen3.8:27b` แทน)
 
 ### ข้อจำกัดที่ต้องรู้
 
@@ -125,8 +143,10 @@ Ollama 0.32 เทียบค่าเหล่านี้ของคำข�
 > ใช้พอร์ต **3000** ไม่ใช่ 8080 ที่เป็นค่ามาตรฐานของ Open WebUI เพราะเครื่องนี้มีโปรแกรมชื่อ
 > `ApplicationWebServer.exe` ครองพอร์ต 8080 อยู่แล้ว
 >
-> เปิดเฉพาะ `127.0.0.1` — เครื่องอื่นในเครือข่ายเข้าไม่ได้ และปิดระบบล็อกอินไว้เพราะใช้คนเดียว
-> ถ้าอยากเปิดบัญชี/รหัสผ่าน แก้ `WEBUI_AUTH` ใน `start-webui.ps1` เป็น `'True'`
+> เปิดเฉพาะ `127.0.0.1` — เครื่องอื่นในเครือข่ายเข้าไม่ได้
+> ตั้งแต่ 1.6.1 (1 ต.ค. 2026) ต้องล็อกอิน: `start-webui.ps1` ตั้ง `WEBUI_AUTH='True'` และ `ENABLE_SIGNUP='False'` ·
+> บัญชีเริ่มต้นอีเมล `admin@localhost` / `P@ssw0rd` ใช้ล็อกอินครั้งแรกครั้งเดียว แล้วเปลี่ยนรหัสทันทีที่ Settings > Account
+> (ช่อง Email ไม่รับคำว่า `admin` เฉย ๆ — ดูหมายเหตุ 1.6.1 ด้านบนเรื่องฐานข้อมูลที่ยังเก็บอีเมลเป็น `admin`)
 
 ### แบบที่ 2 — บรรทัดคำสั่ง
 
@@ -216,7 +236,7 @@ print(r.choices[0].message.content)
 | `task.follow_up.enable` | true | **false** | ยิงโมเดลเพิ่มอีก 1 ครั้ง |
 | `task.query.retrieval.enable` | true | **false** | ยิงโมเดลเพิ่มอีก 1 ครั้ง |
 | `task.query.search.enable` | true | **false** | ยิงโมเดลเพิ่มอีก 1 ครั้ง |
-| `task.model.default` | (ตัวเดียวกัน) | **`qwen-fast:latest`** | ตั้งชื่อแชทด้วย Granite; fallback ไป Qwen3 4B หากยังไม่ติดตั้ง |
+| `task.model.default` | (ตัวเดียวกัน) | **`qwen-fast:latest`** | ตั้งชื่อแชทด้วย Granite; ถ้า Granite ไม่อยู่ Router ใช้ `qwen3.8:27b` (Qwen3 4B ถูกลบแล้ว 5 ต.ค. 2026) |
 | `task.title.enable` | true | true | เก็บไว้ ตั้งชื่อแชทภาษาไทยได้ดี |
 
 แก้เพิ่มได้ในหน้าเว็บที่ Settings → Interface / Admin Panel
@@ -357,8 +377,9 @@ Permission Center (`permission_manager.py`, `permission_center.html`)
   - ถ้าไม่มีเซิร์ฟเวอร์รันอยู่ (เช่นสั่ง `stop-all.ps1`) จะไม่สตาร์ทให้ — ยกเว้นกรณีที่การรีสตาร์ทถูกขัดจังหวะกลางทาง
   - Router จะใช้กฎ "การ์ดใหญ่" ก็ต่อเมื่อ watcher ยืนยันจาก log แล้วว่า Ollama เจอการ์ดจริง (`vram_class`: pending → large/small/none)
 - **Smart Model Router 1.3**: คำถามสั้นและ structured/RAG ส่งไป `granite4.2:8b`; งาน tools/agent และ review ส่งไป `muse-glimmer:30b`
-  · ระหว่างยังไม่มีน้ำหนักใหม่จะ fallback ไป `qwen3:4b` และ `gpt-oss:20b` ตามบทบาท
+  · ถ้า Muse หรือ Granite ยังไม่อยู่จะ fallback ไป `qwen3.8:27b` (`qwen3:4b` และ `gpt-oss:20b` ถูกลบแล้ว 5 ต.ค. 2026)
 - **Video Studio**: ถ้าเสียบการ์ด 24 GB storyboard จะเขียนด้วย `qwen3.8:27b` แทนการตกไปใช้ storyboard สำเร็จรูป
+  · ไม่มีการ์ดใหญ่: ภาษาไทยใช้ storyboard สำเร็จรูปทันที ภาษาอังกฤษใช้ `granite4.2:8b` โดย timeout ปรับตามจำนวนฉาก (แก้ 6 ต.ค. 2026)
 
 ### ก่อนเสียบครั้งแรก (ต้องทำเอง — Claude ทำให้ไม่ได้)
 
@@ -454,7 +475,8 @@ R615 **ไม่รองรับ P620** (R580 เป็นรุ่นสุ�
 
 - 4060 Ti ใส่ `granite4.2:8b` หรือ `qwen3-embedding:4b` ได้ แต่โมเดล 27B/30B ต้องแบ่งกับ CPU; Muse/Qwen-Image แนะนำ RTX 4090 24 GB
 - 4090: `qwen3.8:27b` ที่ context 32k ใช้ราว 19.8 GB รวม vision และ margin — พอดีการ์ด 24 GB แต่จะไม่เหลือที่ให้โมเดลอื่นพร้อมกัน
-  เรียกโมเดลอื่น (embedding, `qwen3:4b`) จะไล่ `qwen3.8` ออกแล้วต้องโหลดกลับ ~10–20 วินาที — router/Video Studio เลี่ยงให้แล้ว ส่วน embedding ตรวจด้วย `-EvictionCheck`
+  เรียกโมเดลอื่น (embedding, `granite4.2:8b`) จะไล่ `qwen3.8` ออกแล้วต้องโหลดกลับ ~10–20 วินาที — Video Studio เลี่ยงให้แล้ว (ใช้ `qwen3.8` เขียน storyboard)
+  แต่ Router 1.3 ยังส่งคำถามสั้น/structured ไป Granite ตามปกติ ส่วน embedding ตรวจด้วย `-EvictionCheck`
 - โหลดโมเดล 17 GB ผ่าน TB3 ครั้งแรกราว 10–20 วินาที (keep_alive 2 ชม. จึงไม่บ่อย)
 
 ### แก้ปัญหา
@@ -536,7 +558,7 @@ R615 **ไม่รองรับ P620** (R580 เป็นรุ่นสุ�
 ปรับเพิ่ม:
 - Router จับคำรูปอื่นด้วย (bugs, debugging, python3, APIs, github, sqlite …) และข้อความต่อเนื่องที่ไม่มีคำบอกงาน ("ทำให้เร็วขึ้นอีก") จะอยู่กับโมเดลเดิมของ 3 ข้อความล่าสุด — ไม่สลับโมเดลไปมา
 - ชื่อแชทของ WebUI สร้างด้วย `qwen-fast` (เดิมเข้า coder 30B เพราะ prompt มีคำว่า "code" และไล่ qwen3.8 ออกจากหน่วยความจำ — Ollama โหลดได้ทีละ 1 โมเดล)
-- `qwen-fast` ใช้ Granite 4.2 8B โดยตรง; ถ้ายังไม่ติดตั้งจะ fallback ไป qwen3:4b
+- `qwen-fast` ใช้ Granite 4.2 8B โดยตรง; ถ้า Granite ไม่อยู่จะ fallback ไป `qwen3.8:27b` (`qwen3:4b` ถูกลบแล้ว 5 ต.ค. 2026)
 - ตัวติดตั้ง (`Configure-Qwen-WebUI.py`, `Configure-OpenClaw.py`) เขียนค่าชุดนี้ด้วย ติดตั้งใหม่ไม่ย้อนค่า (ยกเว้น monitor scratch ของ heartbeat ที่อยู่ในฐานข้อมูลของ gateway — ต้องตั้งใหม่ด้วยคำสั่งด้านล่าง)
 
 Heartbeat ของ OpenClaw: เดิมทุก 30 นาทีจะรันโมเดลค้นหา HEARTBEAT.md ที่ไม่มีอยู่จนหมดเวลา 30 นาที (เครื่องไม่ว่างทั้งวัน) — ตอนนี้ตั้ง "monitor scratch" ว่างไว้ ระบบจึงข้ามรอบโดยไม่เรียกโมเดล · อยากให้มันตรวจอะไรเป็นประจำ ให้เพิ่มบรรทัดงานด้วย
@@ -590,7 +612,7 @@ Heartbeat ของ OpenClaw: เดิมทุก 30 นาทีจะรั�
 
 ### Qwen Codex — Codex CLI คุยกับโมเดลในเครื่อง
 
-- **เปิดใช้**: Start Menu › Qwen Suite › **Qwen Codex – สั่งงานเบื้องหลัง** (พิมพ์งาน เลือกโฟลเดอร์ / ประเภท อ่านอย่างเดียว-แก้ไฟล์-รีวิว / โมเดล แล้วทำเบื้องหลัง) · **Qwen Codex – โหมดโต้ตอบ (ช้า)** · สคริปต์ `local-tools\codex\Invoke-QwenCodex.ps1` (`-Exec`, `-Review`, `-Tui`, `-List`, `-Check`) และ `qwen-exec.cmd` สำหรับ Task Scheduler · คู่มือเต็ม `local-tools\codex\INSTRUCTIONS.md`
+- **เปิดใช้**: Start Menu › Qwen Suite › **Qwen Codex – สั่งงานเบื้องหลัง** (พิมพ์งาน เลือกโฟลเดอร์ / ประเภท อ่านอย่างเดียว-แก้ไฟล์-รีวิว / โมเดล แล้วทำเบื้องหลัง — ตัวเลือกโมเดลตอนนี้มีเฉพาะ `qwen3-coder:30b`: ถอด `gpt-oss:20b` ออก 6 ต.ค. 2026 เพราะถูกลบจากเครื่องแล้ว และจะเพิ่ม `muse-glimmer:30b` หลังทดสอบกับ tool call ของ Codex) · **Qwen Codex – โหมดโต้ตอบ (ช้า)** · สคริปต์ `local-tools\codex\Invoke-QwenCodex.ps1` (`-Exec`, `-Review`, `-Tui`, `-List`, `-Check`) และ `qwen-exec.cmd` สำหรับ Task Scheduler · คู่มือเต็ม `local-tools\codex\INSTRUCTIONS.md`
 - **ทำได้**: อธิบาย/วิเคราะห์โค้ดในโฟลเดอร์ · รีวิว git repo → `<project>\outputs\review-<วันเวลา>.md` (+ `-Docx`) · งานกลางคืนที่ต้องตอบเป็น JSON ตาม schema (`-OutputSchema` บริดจ์ตรวจเอง ไม่ตรง = exit 6) · คุยต่อ `-ResumeLast` · เสร็จแล้วแจ้งเตือน · ถามสถานะจากแชทได้ ("งาน Codex ถึงไหนแล้ว" → `list_codex_jobs`)
 - **ทำไม่ได้ (ตั้งใจ)**: เริ่มงานจาก Telegram/WebUI · แก้ไฟล์ จนกว่าเจ้าของจะเลือก `write_mode` (ดูหัวข้อถัดไป) · ออกเน็ต (proxy ปิด คุยได้แค่ 127.0.0.1) · แตะ `C:\Users\EGAT\.codex` (ใช้ `data\codex-home` แยก เขียน config ใหม่จากแม่แบบทุกครั้ง) · ไม่มี apply_patch — โมเดลเขียนทั้งไฟล์ · กฎคำสั่งห้ามแตะที่เก็บรหัสผ่าน ติดตั้ง/ดาวน์โหลด หยุดบริการ และ shell ซ้อน
 - **ความเร็ว**: งานหนึ่ง ~10-25 นาที (รีวิว diff ≤3k tokens ~5-10 นาที) · โหลด `qwen3-coder:30b` แทน qwen3.8 ⇒ แชทถัดไปช้า (โหลดตัวหลักกลับ + อ่าน prompt ใหม่) · บริดจ์จึงรอจนไม่มีใครใช้โมเดลอื่น 15 นาที (exit 3 = Ollama ไม่ว่าง, 4 = มีงานอื่นอยู่) และคืน RAM ของ coder เองเมื่อจบ · คุณภาพการเรียก tool ของ qwen3-coder ใน Codex ยังไม่ได้พิสูจน์กับโมเดลจริง · ผลรีวิวเป็น "ความเห็นจากโมเดลในเครื่อง ต้องตรวจซ้ำ"
@@ -638,7 +660,7 @@ subagents หลายตัวพร้อมกัน (ต้อง `OLLAMA_NU
 | **Outlook อ่าน + ร่างเมล** | WebUI + Telegram | "วันนี้มีประชุมอะไร", "หาเมลเรื่อง...", "ร่างเมลถึง ... ว่า ..." → บันทึกใน Drafts เท่านั้น ส่งเองใน Outlook · **ต้องแก้โปรไฟล์ Outlook ก่อน** (ดูด้านล่าง) |
 | **สรุปเช้า 07:00** | Telegram | ทุกวัน ไม่ใช้โมเดล: วันที่ · นัดวันนี้ · เมลยังไม่อ่าน · เตือนวันนี้ · สถานะระบบ · automation ชื่อ `qwen-morning-brief` · ดูตัวอย่าง: `webui-venv\Scripts\python.exe local-tools\morning_brief.py` |
 | **ภาพหน้าจอ** | WebUI + Telegram | "ส่งภาพหน้าจอมาดู", "จับเฉพาะจอ 2", "ขอครึ่งซ้ายของจอ" → PNG ใน outputs ของโปรเจกต์ บน Telegram ส่งกลับในแชท (ภาพอาจมีข้อมูลงาน และขึ้นคลาวด์ของ Telegram) |
-| **สร้างรูปด้วย Qwen-Image/Runway** | WebUI · Telegram | `generate_image provider=auto` ใช้ Qwen-Image 2.1 ในเครื่องก่อนเมื่อลง optional pack; ถ้ายังไม่ลงจึงใช้ Runway ตามค่าเดิม (ต้องมี API key/เครดิต) · บังคับได้ด้วย `provider=local` หรือ `provider=runway` |
+| **สร้างรูปด้วย Qwen-Image/Runway** | WebUI · Telegram | `generate_image provider=auto` ใช้ Qwen-Image 2.1 ในเครื่องก่อนเมื่อลง optional pack ครบ (มี `optional\qwen-image-2.1\install.json` ซึ่งเขียนหลังตรวจ CUDA GPU ผ่าน); ถ้ายังไม่ลงจึงใช้ Runway ตามค่าเดิม (ต้องมี API key/เครดิต) · ลงแล้วแต่ GPU ใช้ไม่ได้ตอนนั้น → ใช้ Runway แทนเฉพาะคำขอที่ไม่มี `seed` และไม่มีภาพอ้างอิงในเครื่อง · บังคับได้ด้วย `provider=local` (ไม่ fallback) หรือ `provider=runway` |
 | **ถอดเสียงแม่นขึ้น (Whisper small)** | เสียง Telegram · Ctrl+Alt+D · WebUI | `model-cache\faster-whisper-small` (486 MB) ผิดน้อยกว่า base (ทดสอบเสียงไทย 25% vs 38%) ช้ากว่า ~3 เท่า · คลิปยาวหรือเครื่องไม่ว่างใช้ base อัตโนมัติ (`QWEN_WHISPER_BUDGET_SECONDS`, `QWEN_WHISPER_MODEL=small|base`) |
 | **tunnel สำหรับ LINE** | อินเทอร์เน็ต | ตัวเฝ้าแก้แล้ว (เดิมค้าง 27 ชม. และไม่เริ่มถ้าเปิดเครื่องตอนไม่มีเน็ต) · URL เปลี่ยนทุกครั้งที่รีสตาร์ต → แจ้ง Telegram อัตโนมัติ · ขั้นตอนตั้ง LINE อยู่ใน `internet-gateway\README.md` |
 | **git ของชุดนี้** | เครื่องนี้เท่านั้น | `E:\localllm\.git` (ไม่มี remote) · ดู `GIT-README.txt`: `git status`, `git diff`, `git log`, คืนไฟล์ `git restore <ไฟล์>` |
