@@ -1,4 +1,5 @@
-# Qwen Suite - local-only git snapshot of the suite's OWN source (no remote, never push).
+# Qwen Suite - git history of the suite's OWN source.
+# Remote: the PRIVATE GitHub repo SukritJaAIproject/Qwen-Suite (see GIT-README.txt).
 # Allowlist: everything at the top level is ignored, then the suite's source is re-included.
 # Data, secrets, logs, caches, runtimes, models, third-party installers and binaries stay out.
 # (Comments must be on their own line: text after a pattern would become part of it.)
@@ -8,6 +9,7 @@
 !/.gitattributes
 !/GIT-README.txt
 !/README.md
+!/LICENSE
 !/*.ps1
 !/Configure-*.py
 !/ai-services/
@@ -15,6 +17,11 @@
 !/local-tools/
 !/openclaw-tools/
 !/theme/
+# GitHub front page (English README) and its screenshots only
+!/.github/
+!/docs/
+/docs/*
+!/docs/screenshots/
 
 # ---- never tracked (most are already outside the allowlist; listed to document intent) ----
 # openclaw-workspace has its OWN git repo (E:\localllm\openclaw-workspace\.git) and holds
