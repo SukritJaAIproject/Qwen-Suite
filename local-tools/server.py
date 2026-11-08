@@ -2576,6 +2576,54 @@ def generate_image(
     return _json(result)
 
 
+def _generate_ai_video(
+    prompt: str = "",
+    project: str = "General",
+    seconds: int = 5,
+    aspect_ratio: Literal["16:9", "9:16"] = "16:9",
+    start_image: str = "",
+    path_alias: str = "project",
+    negative_prompt: str = "",
+    seed: int = -1,
+    output_name: str = "",
+    task_id: str = "",
+) -> str:
+    """Sync body of generate_ai_video; the gateway runs it in a worker thread (gateway_dispatch)."""
+    import video_gen
+
+    project_dir, manifest = _output_project(project)
+    image = (start_image or "").strip()
+    if image:
+        image = str(_project_target(project, path_alias, image, must_exist=True)[0])
+    result = video_gen.generate(project_dir / "outputs", prompt, seconds=seconds, aspect_ratio=aspect_ratio,
+                                start_image=image, negative_prompt=negative_prompt,
+                                seed=None if seed < 0 else seed, output_name=output_name, task_id=task_id)
+    result["project"] = manifest["slug"]
+    return _json(result)
+
+
+@mcp.tool(
+    title="Generate a short AI video clip on this computer (Wan 2.2)",
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False),
+)
+async def generate_ai_video(
+    prompt: str = "",
+    project: str = "General",
+    seconds: int = 5,
+    aspect_ratio: Literal["16:9", "9:16"] = "16:9",
+    start_image: str = "",
+    path_alias: str = "project",
+    negative_prompt: str = "",
+    seed: int = -1,
+    output_name: str = "",
+    task_id: str = "",
+) -> str:
+    """Short AI-generated video clip (1-5 s, 1280x704 for 16:9 or 704x1280 for 9:16, 24 fps, no sound) made locally by the separate Wan 2.2 TI2V-5B optional pack (ComfyUI); nothing goes to the cloud. Needs an NVIDIA CUDA GPU (an eGPU works): without the pack it returns status=not_installed with setup steps - relay them. Write the prompt in English: one detailed description of subject, action, setting, lighting and camera motion. start_image: a project image to animate (relative to path_alias). A clip takes several minutes: status=running returns a task_id - call again with the same task_id (no new job). For a narrated video with voice, music and subtitles use generate_video instead."""
+    # async + threadpool: a sync tool would hold :8765's event loop for the whole wait
+    return await run_in_threadpool(_generate_ai_video, prompt, project, seconds, aspect_ratio, start_image, path_alias,
+                                   negative_prompt, seed, output_name, task_id)
+
+
 def _suite_status_report(detail: bool = False) -> str:
     report = HEALTH.report(tool_count=_mcp_tool_count)
     return _json(report if detail else HEALTH.compact(report))
@@ -2667,6 +2715,8 @@ GATEWAY_ACTIONS = {
     "outlook_create_draft": _outlook_create_draft,
     "capture_screen": capture_screen,
     "generate_image": generate_image,
+    # The sync body, not the async MCP tool: gateway_dispatch runs tools via run_in_threadpool.
+    "generate_ai_video": _generate_ai_video,
 }
 # Tools with a `confirmed` parameter: an Ask policy previews them with confirmed=False.
 GATEWAY_CONFIRM_ACTIONS = {

@@ -1,5 +1,43 @@
 # Local LLM บนเครื่อง Dell Precision 3551
 
+## อัปเดต 8 พ.ย. 2026 (Qwen Suite 1.6.2)
+
+- **โมเดลใหม่ 3 ตัว** (เลือกใช้ตรงจากรายการโมเดลใน Open WebUI — ไม่ได้ผูกกับ Smart Router และไม่เปลี่ยนโปรไฟล์ `qwen-*` เดิม):
+  - `qwen3.6:35b` — Qwen3.6 35B-A3B (MoE ใช้งานจริง 3B ต่อ token จึงเร็วบน CPU)
+  - `gemma4:26b-a4b-it-qat` — Gemma 4 26B-A4B (MoE 4B active, QAT 4-bit)
+  - `hf.co/bartowski/MiMo-V2.6-Distill-Qwen-9B-GGUF:Q4_K_M` — MiMo-V2.6 9B (GGUF จาก Hugging Face พร้อม vision projector)
+    ตัว official `mimo-v2.6:9b` ใน Ollama library ตอบ 412 "requires a newer version of Ollama" กับ Ollama 0.32.15 ของเครื่องนี้
+  - preset ใน Open WebUI ใช้ system prompt / num_ctx 32768 / keep_alive 2h / think=false / เครื่องมือ Local Computer Fast เหมือน `qwen3.8:27b` Direct
+  - ผลทดสอบ: ดูหัวข้อ "ผลทดสอบโมเดลใหม่ 8 พ.ย. 2026" ด้านล่างหัวข้อนี้
+- **ย้ายน้ำหนัก Qwen-Image 2.1 (32.06 GiB) ไป `G:\QwenSuite-offload\model-cache\Qwen-Image-2.1`** (ไดรฟ์ My Passport) เพื่อคืนที่ให้ E:
+  ตรวจ SHA-256 ครบ 61 ไฟล์ก่อนลบต้นทาง (ค่าอยู่ใน `G:\QwenSuite-offload\Qwen-Image-2.1.sha256.txt`) — ชุดนี้ใช้ไม่ได้อยู่แล้วจนกว่าจะมี CUDA GPU
+  ย้ายกลับ: ดู `model-cache\Qwen-Image-2.1-MOVED-TO-G.txt` (robocopy กลับมาก่อนรัน Install-Qwen-Image-2.1.cmd จะได้ไม่ต้องดาวน์โหลดใหม่)
+- **เครื่องมือใหม่ `generate_ai_video`** (`local-tools\video_gen.py`): คลิปวิดีโอ AI สั้น 1–5 วินาที 1280×704 / 704×1280 24 fps ไม่มีเสียง
+  สร้างในเครื่องด้วย **ชุดเสริม Wan 2.2** (Wan2.2 TI2V-5B บน ComfyUI v0.43.0, Apache-2.0 ใช้เชิงพาณิชย์ได้) ซึ่งต้องมี NVIDIA CUDA GPU (eGPU ได้)
+  CC 7.5+ VRAM 8 GB+ — ชุดเสริมอยู่นอกตัวติดตั้งหลัก (`Wan-2.2-Optional-Pack-v1.0.zip`) เปิดใช้เมื่อมี `optional\wan-2.2\install.json` เท่านั้น
+  ไม่มีชุดเสริม → ตอบ `status=not_installed` พร้อมวิธีติดตั้ง · ComfyUI ฟังที่ 127.0.0.1:8190 เริ่มเองตอนใช้ครั้งแรก และปลดโมเดลจาก VRAM หลังทุกคลิป
+  ขาออกเป็น `outputs` ของโปรเจกต์ · คลิปใช้เวลาหลายนาที: `status=running` + `task_id` → เรียกซ้ำด้วย task_id เดิม · สิทธิ์: หมวด Media editing (`media_write`)
+- **Qwen Suite Desktop** (`desktop\QwenSuiteDesktop.exe`, ไอคอน "Qwen Suite Desktop" บน Desktop): หน้าต่างเดียว (WebView2) มีปุ่ม แชต / Permission Center /
+  หน่วยประมวลผล / Video Studio / สถานะระบบ (Ctrl+1..5, F5) · เปิดในแอปเฉพาะ 127.0.0.1:3000 และ :8765 ลิงก์เว็บอื่นเปิดในเบราว์เซอร์หลัก
+  สคีมอื่น (file:, ms-settings: ฯลฯ) ถูกบล็อก · ถ้า Qwen Suite ยังไม่ทำงาน มีปุ่มเริ่ม Qwen All-in-One · โปรไฟล์ WebView2 แยกที่
+  `%LOCALAPPDATA%\QwenSuite\Desktop` (ครั้งแรกต้องล็อกอิน Open WebUI ในแอป) · ทดสอบนโยบาย URL: `QwenSuiteDesktop.exe --selftest out.txt`
+- **ตัวติดตั้ง Qwen Suite 1.6.2 Online** อยู่ในโฟลเดอร์ Qwen Suite Installers (ไฟล์ 1.6.1 เดิมเก็บไว้ไม่ทับ)
+- ไฟล์ที่ถูกแทนที่ในวันนี้สำรองไว้ที่ `backups\pre-1.6.2-*` · การเปลี่ยนแปลงชุดนี้ commit และ push ขึ้น GitHub (repo private) รวมครั้งเดียวหลังงานเสร็จ ตามที่เจ้าของเครื่องอนุมัติ
+
+### ผลทดสอบโมเดลใหม่ 8 พ.ย. 2026
+
+ทดสอบผ่าน Ollama API บนเครื่องนี้ (CPU i7-10750H, num_ctx 32768, think=false, temperature 0) ด้วย `pull_models.py`
+(ข้อความไทย "เมืองหลวงของประเทศไทย", tool call `get_weather` จากคำถามภาษาไทย, รูปวงกลมสีแดง):
+
+| โมเดล | ขนาด | ความสามารถจาก Ollama | ตอบไทย | ความเร็วตอบ | Tool call | อ่านภาพ | หน่วยความจำตอนโหลด |
+|---|---|---|---|---|---|---|---|
+| Qwen3.6 35B-A3B (`qwen3.6:35b`) | 22.62 GB | completion, vision, tools, thinking | ผ่าน "กรุงเทพมหานคร" | 6.96 tok/s (โหลด 25.8 s) | ผ่าน `get_weather({"city": "Chiang Mai"})` | ผ่าน (red) | 21.03 GiB (บน P620 0.89 GiB) |
+| Gemma 4 26B-A4B (`gemma4:26b-a4b-it-qat`) | 15.63 GB | completion, vision, tools, thinking | ผ่าน "กรุงเทพมหานคร" | 7.18 tok/s (โหลด 16.9 s) | ผ่าน `get_weather({"city": "Chiang Mai"})` | ผ่าน (Red) | 14.97 GiB (บน P620 1.19 GiB) |
+| MiMo-V2.6 9B (`hf.co/bartowski/MiMo-V2.6-Distill-Qwen-9B-GGUF:Q4_K_M`) | 6.76 GB | tools, thinking, completion, vision | ผ่าน "กรุงเทพฯ (กรุงเทพมหานคร)" | 6.33 tok/s (โหลด 12.0 s) | ผ่าน `get_weather({"city": "เชียงใหม่"})` | ผ่าน (Red) | 7.02 GiB (บน P620 1.55 GiB) |
+
+- MiMo-V2.6 9B: ข้ามแท็ก `mimo-v2.6:9b-q4_K_M`, `mimo-v2.6:9b` เพราะ Ollama 0.32.15 ตอบ 412 (ต้องใช้ Ollama รุ่นใหม่กว่า)
+- หน่วยความจำตอนโหลดคือค่าจาก `/api/ps` ที่ num_ctx 32768 — ส่วน "บน P620" คือที่ Ollama วางไว้บน Quadro P620 (ทาง B ยังไม่ได้ปิดการ์ดนี้)
+
 ## อัปเดตโมเดล 1 ต.ค. 2026 (Qwen Suite 1.6)
 
 - `qwen-agent:latest` และ `qwen-review:latest` ใช้ `muse-glimmer:30b` สำหรับ tools, agent workflow และ Second Opinion
@@ -314,7 +352,7 @@ Ollama 0.32.9 คอมไพล์ CUDA v13 ที่ไม่รองรั�
 | พอร์ต | บริการ | ไฟล์ |
 |---|---|---|
 | 3000 | Open WebUI | `start-webui.ps1` |
-| 8765 | Local Computer Tools (MCP เต็ม **71 tools** — 36 เดิม + 26 จากหัวข้อ "ความสามารถแบบ Codex" + 9 จากหัวข้อ "งานชุดที่ 3") | `local-tools\server.py` |
+| 8765 | Local Computer Tools (MCP เต็ม **72 tools** — 36 เดิม + 26 จากหัวข้อ "ความสามารถแบบ Codex" + 9 จากหัวข้อ "งานชุดที่ 3" + 1 `generate_ai_video` จากหัวข้อ "อัปเดต 8 พ.ย. 2026") | `local-tools\server.py` |
 | 8766 | Permission gateway สำหรับ Open WebUI (2 tools: `local_read`, `local_action`) | `local-tools\fast_server.py --source webui` |
 | 8767 | Permission gateway สำหรับ OpenClaw (Telegram/WhatsApp/LINE) | `local-tools\fast_server.py --source openclaw` |
 | 8770 | Smart Model Router | `ai-services\router.py` |

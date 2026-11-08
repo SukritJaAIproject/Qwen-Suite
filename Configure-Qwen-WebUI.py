@@ -28,7 +28,18 @@ MODEL_PROFILES = [
     ("qwen-agent:latest", "Qwen Agent", "Muse Glimmer 30B for tools, multi-step agent work, and failure recovery."),
     ("qwen-review:latest", "Qwen Second Opinion", "Muse Glimmer 30B for independent review and second-pass checking."),
     ("qwen3.8:27b", "Qwen3.8 27B Direct", "Direct access to the primary general, vision, and agent model."),
+    # Added 2026-11-08 (Qwen Suite 1.6.2): optional direct models. Pulled by the installer only when its
+    # "extra models" task is ticked and the disk has room; a preset whose model is missing stays hidden.
+    ("qwen3.6:35b", "Qwen3.6 35B-A3B", "Qwen3.6 35B MoE (3B active): quick general model with vision and tools; fast on CPU."),
+    ("gemma4:26b-a4b-it-qat", "Gemma 4 26B-A4B", "Google Gemma 4 26B MoE (4B active, QAT 4-bit): multilingual chat, vision, and tools."),
+    ("hf.co/bartowski/MiMo-V2.6-Distill-Qwen-9B-GGUF:Q4_K_M", "MiMo-V2.6 9B",
+     "Xiaomi MiMo-V2.6 Distill 9B (Qwen3.5 base): small coding and agent model with vision and tools."),
 ]
+# Presets that accept images (the model reports the 'vision' capability in Ollama /api/show).
+VISION_PROFILES = {
+    "qwen-auto:latest", "qwen-general:latest", "qwen3.8:27b",
+    "qwen3.6:35b", "gemma4:26b-a4b-it-qat", "hf.co/bartowski/MiMo-V2.6-Distill-Qwen-9B-GGUF:Q4_K_M",
+}
 # Preset rows made by hand in Workspace > Models; they get the builtinTools trim only.
 EXTRA_PRESET_IDS = ("qwen3.8-local:27b",)
 # Built-in tool groups the presets never use (2026-09-30). Open WebUI adds every group whose
@@ -458,7 +469,7 @@ def configure(db_path: Path) -> dict[str, object]:
                     "file_upload": True,
                     "usage": True,
                     "citations": True,
-                    "vision": profile_id in {"qwen-auto:latest", "qwen-general:latest", "qwen3.8:27b"},
+                    "vision": profile_id in VISION_PROFILES,
                     "web_search": True,
                 },
                 "knowledge": None,

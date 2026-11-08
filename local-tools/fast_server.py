@@ -93,6 +93,7 @@ CATALOG = {
     },
     "media": {
         "generate_video": "action | project, prompt, duration_seconds?, aspect_ratio=(9:16|16:9|1:1)?, style?, language?, voice?, output_name?, title?, notify?; one-call storyboard+TTS+music+render+QA; the owner gets one message when it ends",
+        "generate_ai_video": "action | prompt (English: subject, action, setting, light, camera motion), project?, seconds=(1-5)?, aspect_ratio=(16:9|9:16)?, start_image? (project image to animate), path_alias?, negative_prompt?, seed?, output_name?, task_id? (resume); 1-5 s AI clip, 24 fps, no sound, made locally by the separate Wan 2.2 optional pack (needs an NVIDIA CUDA GPU/eGPU); status=not_installed: relay its message; status=running: call again with task_id",
         "list_video_jobs": "read | project?, include_completed?, limit?",
         "get_video_job": "read | job_id; returns thinking/designing/voice/rendering/QA progress and output",
         "retry_video_job": "action | job_id; resumes from valid checkpoints",
@@ -374,7 +375,7 @@ def local_action(
     arguments_json: str = "{}",
     approval_id: str = "",
 ) -> str:
-    """Write/edit files, projects, programs, saved project actions (run_project_action), tasks, reminders (Telegram), video, documents (make_document, edit_document, pdf_tools, make_chart), research (start_research), coding jobs (start_codex_job), Outlook drafts (never sends), screenshots (capture_screen), pictures (generate_image), processing unit (CPU/GPU): dispatcher protected by Permission Center. Execute directly under Allow; reuse approval_id only when approval_required is returned."""
+    """Write/edit files, projects, programs, saved project actions (run_project_action), tasks, reminders (Telegram), video, documents (make_document, edit_document, pdf_tools, make_chart), research (start_research), coding jobs (start_codex_job), Outlook drafts (never sends), screenshots (capture_screen), pictures (generate_image), AI video clips (generate_ai_video), processing unit (CPU/GPU): dispatcher protected by Permission Center. Execute directly under Allow; reuse approval_id only when approval_required is returned."""
     return _dispatch("action", action, arguments_json, approval_id=approval_id)
 
 

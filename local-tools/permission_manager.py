@@ -163,6 +163,9 @@ ACTION_CATEGORIES: dict[str, str] = {
     "outlook_create_draft": "computer_write",
     "capture_screen": "system_execute",
     "generate_image": "project_write",
+    # Local AI video clip (Wan 2.2 optional pack, 2026-11-08): a new file in the project's outputs folder,
+    # like the other media tools.
+    "generate_ai_video": "media_write",
     # Deep research job (background task) and its status (read).
     "start_research": "task_control",
     "get_research": "project_read",
