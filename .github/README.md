@@ -64,15 +64,28 @@ Qwen Suite is a local, single-user AI workstation for Windows. It connects Ollam
       <sub>One window with tabs for chat, Permission Center, compute device, Video Studio and status.</sub></p>
     </td>
   </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="../docs/screenshots/desktop-app-chat.png"><img src="../docs/screenshots/cards/desktop-app-chat.png" alt="A sample chat in Qwen Suite Desktop" width="100%"></a>
+      <p><b>Chat</b> &nbsp;<code>:3000</code><br>
+      <sub>Open WebUI in Qwen Suite Desktop. The Qwen Auto Router picks the model for each message; tools were attached, so this answer came from Muse Glimmer 30B.</sub></p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="../docs/screenshots/cards/sign-in.png"><img src="../docs/screenshots/cards/sign-in.png" alt="Open WebUI sign-in page with the forgot-password and sign-up buttons" width="100%"></a>
+      <p><b>Sign-in with account help</b> &nbsp;<code>/auth</code><br>
+      <sub>"Forgot password?" e-mails the owner a one-time reset link. "Sign up" creates an account that waits for the owner's approval.</sub></p>
+    </td>
+  </tr>
 </table>
 
-<sub>From the reference machine on 9 November 2026 (release 1.6.2). The interface is in Thai. Click a screenshot to open the full page. Some project names and paths, and a GPU ID, are blurred.</sub>
+<sub>From the reference machine on 9 November 2026 (release 1.6.2). The interface is in Thai, and the chat is a sample conversation. Click a screenshot to open the full page. Some project names and paths, and a GPU ID, are blurred.</sub>
 
 ## Features
 
 | | Area | What you get |
 |---|---|---|
 | 💬 | **Chat** | Open WebUI with sign-in, a Smart Model Router with seven profiles, RAG with a local reranker, three extra models |
+| 🔑 | **Accounts** | A forgot-password link by e-mail for the owner, and sign-up with the owner's approval; other users get the chat, not the PC's tools |
 | 🧰 | **Local tools** | 72 MCP tools (files, projects, commands, Office and PDF, charts, reminders, screenshots) behind a Permission Center |
 | 🎬 | **Video** | Video Studio turns one prompt into a narrated MP4; the optional Wan 2.2 pack makes short AI clips on a CUDA GPU |
 | 🔎 | **Research and knowledge** | Unattended web research to a cited Word report; keyword search over document collections |
@@ -93,7 +106,7 @@ Click a name to open it.
 <details>
 <summary><b>Chat and model routing</b></summary>
 
-- Open WebUI 0.11 runs at `http://127.0.0.1:3000`. Sign-in is required and self-registration is turned off.
+- Open WebUI 0.11 runs at `http://127.0.0.1:3000`. Sign-in is required. New accounts can sign up but wait for the owner's approval (see *Accounts* below).
 - The **Smart Model Router** (`:8770`) speaks the Ollama API and adds seven model profiles: `qwen-auto`, `qwen-general`, `qwen-code`, `qwen-fast`, `qwen-structured`, `qwen-agent` and `qwen-review`.
 - `qwen-auto` picks a model for each request, using English and Thai keyword rules plus message length. The first matching rule wins:
 
@@ -124,6 +137,23 @@ Click a name to open it.
 - Slash prompts `/plan`, `/review`, `/summary`, `/letter`, `/minutes` and `/drawing` (Thai), plus prompt suggestions.
 - Voice input uses local faster-whisper with VAD. `ai-services/dictate.ps1` adds push-to-talk dictation anywhere in Windows (Ctrl+Alt+D through its Start Menu shortcut): it records the microphone, transcribes locally, copies the text to the clipboard and deletes the audio.
 - Scripts added to Open WebUI: a dark theme, auto-continue for answers that were cut off (up to 6 segments) and buttons that open Projects & Tasks, Permission Center and Video Studio.
+
+</details>
+
+<details>
+<summary><b>Accounts: forgot password and sign-up</b></summary>
+
+Two buttons sit under the Open WebUI sign-in form: "ลืมรหัสผ่าน?" (forgot password) and "สมัครบัญชีใหม่" (sign up). They are added by `theme/qwen-account.js`, which `start-webui.ps1` copies into Open WebUI on every start. New in the r5 rebuild of 1.6.2.
+
+- **Forgot password** opens a small panel served by the local tools (`local-tools/account_recovery.py` and `account.html`, at `/account/forgot` on `:8765`). For the owner's account it e-mails a single-use reset link from the owner's Gmail:
+  - The link is valid for 15 minutes and points at `127.0.0.1:8765/account/reset`, so it opens only on this PC. The token sits in the URL fragment, which browsers do not send to the server, and the suite keeps only its SHA-256 hash.
+  - The new password (at least 8 characters, at most 72 bytes) is written as a bcrypt hash into Open WebUI's `auth` table for that one account, the way Open WebUI stores passwords itself.
+  - Only admin accounts with a recovery address get a link. Every other address gets the same neutral answer, and the owner resets other users in Admin Panel › Users.
+  - Limits: 3 links per account and 10 in total per hour, at least a minute apart. 20 wrong links in 10 minutes pause the page.
+- **One-time setup:** `local-tools\Setup-RecoveryEmail.cmd` asks for the Gmail address, a Google App Password (the account needs 2-Step Verification) and the address that receives the links. It sends a test e-mail before it saves anything. The App Password is stored with Windows DPAPI for the current Windows user, in `data\secrets\recovery-smtp.bin`. The setup reads the admin accounts straight from Open WebUI's database, so it also works when the owner is already locked out.
+- **Sign up** is Open WebUI's own form with `ENABLE_SIGNUP=True` and `DEFAULT_USER_ROLE=pending`. A new account can do nothing until the owner approves it in Admin Panel › Users. The owner gets a Windows notification, and a Telegram message when notifications are set up, for each new account.
+- **What other users get:** the suite's model presets are shared read-only with all users, but the MCP tool servers stay owner-only, and the Permission Center, Video Studio and Projects & Tasks buttons are hidden for them. The `:8765` pages themselves have no sign-in, so anyone who can use this PC can still open them directly.
+- Tested before going live: 64 unit checks with the real bcrypt and DPAPI on the reference machine, 35 browser checks, and the database change applied to a copy and reverted exactly. The owner then reset a forgotten password through the e-mailed link.
 
 </details>
 
@@ -367,13 +397,14 @@ Click a name to open it.
 
 Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
 
+- **Account help on the sign-in page** (rebuild r5): a forgot-password link by e-mail for the owner, and sign-up with the owner's approval.
 - **Project sync into Open WebUI works again.** The tools use the owner's own Open WebUI API key, limited to the folders, memories and files endpoints, and catch up in the background.
 - **Telegram and WhatsApp reconnect by themselves** after a network outage: a new channel watchdog restarts a channel that OpenClaw gave up on, once the internet is back.
 - **Health dashboard:** OpenClaw checks stay reliable when its CLI is slow, outages are reported at the time they happened, and a new card covers Project sync.
 - **Ollama 0.40.15** and three extra models you can pick directly: Qwen3.6 35B-A3B, Gemma 4 26B-A4B and the official MiMo-V2.6 9B.
 - **AI video clips** with the new `generate_ai_video` tool and the optional Wan 2.2 pack.
 - **Qwen Suite Desktop**, one window for chat, permissions, compute device, Video Studio and status.
-- **Installers 1.6.2:** a rebuilt Online installer and a new Offline installer that also updates the bundled Ollama runtime when it installs over Offline 1.6.1.
+- **Installers 1.6.2:** a rebuilt Online installer and a new Offline installer that also updates the bundled Ollama runtime when it installs over Offline 1.6.1. Both were rebuilt again (r5) with the account help.
 
 ## Architecture
 
@@ -427,7 +458,7 @@ Not drawn, to keep the diagram readable: the GPU scripts (`Resolve-OllamaGpu.ps1
 | Port | Service | Started by |
 |---|---|---|
 | 3000 | Open WebUI | `start-webui.ps1` |
-| 8765 | Local Computer tools: 72 MCP tools, web pages, `/gateway/dispatch`, channel watchdog | `local-tools/start-local-tools.ps1` |
+| 8765 | Local Computer tools: 72 MCP tools, web pages, `/gateway/dispatch`, channel watchdog, account help | `local-tools/start-local-tools.ps1` |
 | 8766 | Permission gateway for Open WebUI | `local-tools/start-local-tools.ps1` |
 | 8767 | Permission gateway for OpenClaw | `local-tools/start-local-tools.ps1` |
 | 8770 | Smart Model Router | `ai-services/start-ai-services.ps1` |
@@ -454,7 +485,7 @@ Not drawn, to keep the diagram readable: the GPU scripts (`Resolve-OllamaGpu.ps1
 
 ### Option A: installers
 
-Use the Online or Offline installer (1.6.2). They are distributed separately from this repository. They install the runtimes and, in the offline build, the models. They then apply the configuration with the `Configure-*.py` scripts. After installation, sign in at `http://127.0.0.1:3000` and change the default password (see [Security model](#security-model)).
+Use the Online or Offline installer (1.6.2). They are distributed separately from this repository. They install the runtimes and, in the offline build, the models. They then apply the configuration with the `Configure-*.py` scripts. After installation, sign in at `http://127.0.0.1:3000` and change the default password (see [Security model](#security-model)). To use the forgot-password link, run `local-tools\Setup-RecoveryEmail.cmd` once.
 
 <details>
 <summary><b>Option B: from source (manual)</b>: the steps the scripts expect, for a source install</summary>
@@ -516,11 +547,12 @@ Ports, the Permission Center, owner-editable files, state files, environment var
   | `data\compute-selection.json`, `data\model-placement.json` | CPU/GPU choice and per-model CPU pins |
   | `data\codex-bridge.json` | Codex bridge `write_mode` and models |
   | `data\notify.json`, `data\dictate.json` | Notification channels; dictation microphone and language |
+  | `data\account-recovery.json`, `data\secrets\recovery-smtp.bin` | Forgot-password e-mail: sender and recovery addresses; the Gmail App Password, encrypted with DPAPI (both written by `local-tools\Setup-RecoveryEmail.cmd`) |
   | `data\credentials\runway-api-key.txt` | Runway developer key (owner-created; blocked for the model's file tools) |
   | `local-tools\allowed-roots.json` | Folders the file tools may use (default: user profile, suite folder, `E:\qwen-projects`, Documents) |
 
-- **State the suite writes** (read by the health dashboard, also git-ignored): `data\project-sync.json` (what is still waiting to sync into Open WebUI), `data\channel-watchdog.json` and `logs\channel-watchdog.log` (channel restarts), `data\gpu-profile.json` (the current GPU decision).
-- **Environment variables:** `QWEN_GPU_MODE`, `QWEN_CHANNEL_WATCHDOG` (`0` turns the channel watchdog off), `QWEN_EXPECTED_MAX_LOADED` (what the health dashboard expects for `OLLAMA_MAX_LOADED_MODELS`, default 2), `QWEN_WHISPER_MODEL`, `QWEN_WHISPER_BUDGET_SECONDS`, `QWEN_RESEARCH_IDLE_MINUTES`, `QWEN_OUTLOOK_ALLOW_START`, `QWEN_OUTLOOK_TIMEOUT` and `QWEN_TESSERACT`. The `OLLAMA_*` variables are read from the User environment by the launchers.
+- **State the suite writes** (read by the health dashboard, also git-ignored): `data\project-sync.json` (what is still waiting to sync into Open WebUI), `data\channel-watchdog.json` and `logs\channel-watchdog.log` (channel restarts), `data\gpu-profile.json` (the current GPU decision), `data\account-recovery-state.json` and `data\account-recovery.log` (reset-link hashes, limits and events, never passwords or tokens).
+- **Environment variables:** `QWEN_GPU_MODE`, `QWEN_CHANNEL_WATCHDOG` (`0` turns the channel watchdog off), `QWEN_ACCOUNT_WATCH` (`0` turns off the notice about new sign-ups), `QWEN_EXPECTED_MAX_LOADED` (what the health dashboard expects for `OLLAMA_MAX_LOADED_MODELS`, default 2), `QWEN_WHISPER_MODEL`, `QWEN_WHISPER_BUDGET_SECONDS`, `QWEN_RESEARCH_IDLE_MINUTES`, `QWEN_OUTLOOK_ALLOW_START`, `QWEN_OUTLOOK_TIMEOUT` and `QWEN_TESSERACT`. The `OLLAMA_*` variables are read from the User environment by the launchers.
 - **Excluded from git:** `.gitignore` is an allowlist. Only the top-level scripts and documents, `ai-services/`, `internet-gateway/`, `local-tools/`, `openclaw-tools/`, `theme/`, this page and its screenshots are tracked. Everything else stays local, including:
   - Data and secrets: `data\`, `webui-data\`, `internet-gateway\data\`, `.webui_secret_key`, `allowed-roots.json`.
   - Logs and caches: `logs\`, `backups\`, `hf-cache\`, `model-cache\`.
@@ -535,7 +567,9 @@ Ports, the Permission Center, owner-editable files, state files, environment var
 This is a single-owner setup that deliberately trades confirmations for convenience. Read this section before connecting any chat channel.
 
 - **Loopback only.** Open WebUI, the tool servers, router, reranker, internet gateway, Ollama, ComfyUI and the OpenClaw gateway all bind `127.0.0.1`. Open WebUI accepts browser API calls only from its own origin (`CORS_ALLOW_ORIGIN`). The `:8765` JSON endpoints refuse cross-origin posts, and the status API refuses foreign `Host` headers.
-- **Login.** Open WebUI requires a password and has self-registration disabled. The configuration script creates the owner account **`admin@localhost`** with a default password. **Change it at the first sign-in** (Settings > Account). The default password is not printed here, but anyone with the source can read it, so treat it as public.
+- **Login.** Open WebUI requires a password. The configuration script creates the owner account **`admin@localhost`** with a default password. **Change it at the first sign-in** (Settings > Account). The default password is not printed here, but anyone with the source can read it, so treat it as public.
+- **Sign-up and other users.** Anyone at this PC can sign up, but a new account stays *pending* until the owner approves it. Approved users get the chat presets, not the PC's tools.
+- **Password reset.** The forgot-password link goes only to the owner's recovery address. It opens only on this PC, works once within 15 minutes and is stored only as a hash. The Gmail App Password is encrypted with Windows DPAPI for the owner's Windows account and is not in the installers.
 - **Project sync key.** Open WebUI API keys are limited to `/api/v1/folders`, `/api/v1/memories` and `/api/v1/files`. The tools read the owner's key from Open WebUI's database when they need it and never copy it elsewhere. With that limit the key cannot read chats or user accounts or create new keys (checked: HTTP 403).
 
 <details>
@@ -624,14 +658,14 @@ Licences were checked on the public model pages in October 2026, and those of th
   - Outlook support is classic Outlook (COM) only.
 - **Packaging gaps:**
   - There is no consolidated `requirements.txt` and no bootstrap script.
-  - Automated tests in this repository cover the internet gateway (24 `unittest` cases), the GPU decision logic (`Test-QwenGpu.ps1 -SelfTest`) and the Codex policy hook (`policy_hook.py --selftest`, run before every Codex job). The 1.6.2 health-dashboard and watchdog changes were tested with separate fake-based suites (15 and 13 cases) that are not part of this repository.
+  - Automated tests in this repository cover the internet gateway (24 `unittest` cases), the GPU decision logic (`Test-QwenGpu.ps1 -SelfTest`) and the Codex policy hook (`policy_hook.py --selftest`, run before every Codex job). The 1.6.2 health-dashboard and watchdog changes were tested with separate fake-based suites (15 and 13 cases), and the account help with 64 unit and 35 browser checks; none of these suites are part of this repository.
 
 ## Repository layout
 
 ```text
 *.ps1, Configure-*.py   launchers, stop scripts, GPU selection, benchmarks, configuration
 ai-services/            model router (:8770), reranker (:8771), speech-to-text, Thai TTS, dictation
-local-tools/            MCP tools (:8765), permission gateways (:8766/:8767), workers, channel watchdog, web pages
+local-tools/            MCP tools (:8765), permission gateways (:8766/:8767), workers, channel watchdog, account help, web pages
 local-tools/codex/      Codex CLI bridge (templates, policy hook, job tracking)
 internet-gateway/       internet prompt gateway (:8780), quick tunnel and watchdog, tests
 openclaw-tools/         OpenClaw launch and channel scripts, chat skills
@@ -648,7 +682,7 @@ LICENSE                 MIT License for the suite's own code
 
 The full release history is in [CHANGELOG.md](../CHANGELOG.md):
 
-- **1.6.2** (8–9 November 2026): Project sync fix, channel watchdog, Ollama 0.40.15, extra models, AI video clips, Qwen Suite Desktop, Online and Offline installers.
+- **1.6.2** (8–9 November 2026): Project sync fix, channel watchdog, account help (forgot password, sign-up with approval), Ollama 0.40.15, extra models, AI video clips, Qwen Suite Desktop, Online and Offline installers.
 - **1.6.1** (1–7 October 2026): Open WebUI sign-in, the `admin@localhost` owner account, the models check on the health dashboard.
 - **1.6** (1 October 2026): Muse Glimmer and Granite take over the agent, review, fast and structured roles; optional local Qwen-Image.
 - **1.5.0 and 1.4.0** (30 September 2026): Codex from chat, knowledge base, Outlook, morning brief, screenshots, Runway images, Codex-style and Claude-style tools, eGPU support.

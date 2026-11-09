@@ -1,7 +1,29 @@
 # Local LLM บนเครื่อง Dell Precision 3551
 
-## อัปเดต 9 พ.ย. 2026 (Qwen Suite 1.6.2 — แก้ Project sync, อัปเกรด Ollama, MiMo รุ่น official, หน้าสถานะ OpenClaw, WhatsApp ต่อใหม่เอง, ตัวติดตั้ง Offline)
+## อัปเดต 9 พ.ย. 2026 (Qwen Suite 1.6.2 — แก้ Project sync, อัปเกรด Ollama, MiMo รุ่น official, หน้าสถานะ OpenClaw, WhatsApp ต่อใหม่เอง, ปุ่มลืมรหัสผ่าน/สมัครบัญชี, ตัวติดตั้ง Offline)
 
+- **ปุ่ม "ลืมรหัสผ่าน?" และ "สมัครบัญชีใหม่" บนหน้าล็อกอิน Open WebUI** (9 พ.ย. 2026 บ่าย)
+  - **ลืมรหัสผ่าน?** เปิดหน้า `http://127.0.0.1:8765/account/forgot` แล้วส่งลิงก์ตั้งรหัสใหม่ทาง Gmail ไปที่อีเมลกู้คืนของบัญชีเจ้าของ (admin)
+    · ลิงก์ใช้ได้ครั้งเดียวภายใน 15 นาที และเปิดได้เฉพาะเครื่องนี้ (`127.0.0.1:8765/account/reset#token=…` — token อยู่หลัง `#` จึงไม่ถูกส่งถึงเซิร์ฟเวอร์หรือ log)
+    · ขอได้ไม่เกิน 3 ลิงก์ต่อชั่วโมงต่อบัญชี ลิงก์ใหม่ทำให้ลิงก์เก่าใช้ไม่ได้ · เปลี่ยนรหัสแล้วเจ้าของเครื่องได้ toast + Telegram
+    · บัญชีทั่วไปไม่มีอีเมลส่งให้ — admin ตั้งรหัสใหม่ให้ที่ Admin Panel > Users
+  - **ตั้งค่าครั้งเดียว**: ดับเบิลคลิก `local-tools\Setup-RecoveryEmail.cmd` → กรอก Gmail ที่ใช้ส่ง, App Password 16 ตัว (ต้องเปิด 2-Step Verification
+    แล้วสร้างที่ https://myaccount.google.com/apppasswords · ตัวอักษรไม่แสดงบนจอ) และอีเมลที่จะรับลิงก์ → ระบบส่งอีเมลทดสอบก่อนบันทึก
+    · App Password เก็บแบบ Windows DPAPI ที่ `data\secrets\recovery-smtp.bin` (ใช้ได้เฉพาะผู้ใช้ Windows คนนี้) · ค่าอื่นอยู่ที่ `data\account-recovery.json`
+    · ส่งผ่าน `smtp.gmail.com` พอร์ต 587 (STARTTLS) ถ้าต่อไม่ได้ลอง 465 — เครือข่ายที่ปิดสองพอร์ตนี้จะส่งไม่ได้ (หน้าเว็บบอกเหตุผล)
+  - **สมัครบัญชีใหม่** ใช้ฟอร์ม sign-up ของ Open WebUI เอง: `ui.enable_signup = true`, `ui.default_user_role = "pending"`
+    · บัญชีใหม่ต้องรอเจ้าของอนุมัติที่ Admin Panel > Users · มีคนสมัครแล้วเจ้าของได้ toast + Telegram (ตรวจทุก 1 นาที, ปิดได้ด้วย `QWEN_ACCOUNT_WATCH=0`)
+    · บัญชีที่อนุมัติแล้วแชตกับ preset ของชุดได้ (สิทธิ์อ่าน `user:*` ที่ preset ใน `MODEL_PROFILES`) แต่**ใช้เครื่องมือในเครื่องไม่ได้**:
+      tool server ทุกตัวตั้ง `access_grants: []` ซึ่ง Open WebUI 0.11 ถือว่าเป็นของ admin เท่านั้น · ปุ่มลอย Permissions / Video Studio / Projects & Tasks
+      ซ่อนในหน้าล็อกอินและสำหรับบัญชีที่ไม่ใช่ admin (`theme\qwen-account.js`)
+    · ข้อจำกัดเดิมยังอยู่: หน้าใน `:8765` (Permission Center ฯลฯ) ไม่มีระบบล็อกอิน คนที่ใช้ PC เครื่องนี้เปิด URL ตรงได้
+  - ไฟล์: `local-tools\account_recovery.py`, `local-tools\account.html`, `local-tools\Setup-RecoveryEmail.cmd`, `theme\qwen-account.js` (ใหม่) ·
+    `local-tools\server.py` (หน้า/API `/account/...`), `local-tools\notifier.py` (`notify_owner`), `start-webui.ps1`, `Configure-Qwen-WebUI.py`
+    · ทดสอบก่อนใช้จริง: unit 55 ข้อ (bcrypt + DPAPI จริงบนเครื่องนี้), เบราว์เซอร์ 35 ข้อ, เปลี่ยนค่าฐานข้อมูลกับสำเนาแล้วย้อนกลับได้ตรง
+    · สำรอง: `backups\pre-account-help-20261109-125919` · แก้ช่องใส่ App Password ให้เห็น * และวางด้วย Ctrl+V ได้ (13:07, สำรอง `backups\pre-account-setup-fix-20261109-130740`)
+  - ตัวติดตั้ง 1.6.2 สร้างใหม่รอบ r5 ให้มีปุ่มนี้แล้ว (Online และ Offline · คู่มือ `INSTALL-GUIDE-TH-1.6.2.txt` มีหัวข้อ "ลืมรหัสผ่านและสมัครบัญชีใหม่")
+    ในตัวติดตั้งไม่มีอีเมลกู้คืนหรือ App Password ของเครื่องนี้ — เครื่องที่ติดตั้งใหม่ต้องรัน `local-tools\Setup-RecoveryEmail.cmd` เอง
+  - ลืมรหัสและยังไม่ได้ตั้งอีเมลกู้คืน: ใช้ `E:\claude-work\qwen-suite-20261108\pwreset\Reset-OpenWebUI-Password.cmd` (สำรอง `webui.db` ก่อน แล้วพิมพ์รหัสใหม่เองแบบซ่อนตัวอักษร)
 - **Project sync เข้า Open WebUI กลับมาใช้ได้** (เสียตั้งแต่ 1.6.1 ที่หน้าเว็บเริ่มต้องล็อกอิน):
   - `local-tools\project_store.py` ล็อกอินด้วย **API key ของบัญชีเจ้าของเครื่อง** ที่อ่านจาก `webui-data\webui.db` ทุกครั้งที่ต้องใช้
     (ไม่ได้คัดลอก key ไปเก็บที่อื่น ถ้าสร้าง key ใหม่ที่ Settings › Account › API Keys ระบบก็ใช้ key ใหม่เอง)
@@ -49,13 +71,13 @@
   - ทดสอบด้วยของปลอมก่อนใช้จริง: watchdog 13/13, หน้าสถานะ 15/15 · สำรองไฟล์เดิม `backups\pre-r4-watchdog-20261109-093009`
 - **ตัวติดตั้ง Qwen Suite 1.6.2 Offline** แทนชุด 1.6.1: payload เดียวกับ Online 1.6.2 พร้อม Qwen Suite Desktop และ Ollama 0.40.15 ของเครื่องนี้
   (`ollama.exe` + `lib` ตรวจขนาดและ CRC32 ครบทุกไฟล์) · `Qwen-Setup-Offline.exe` + 35 ไฟล์ .bin รวม 63.77 GiB · อ่าน `outputs\README-FIRST-Offline-1.6.2.txt`
-  - สร้างใหม่ (r4) ตอน 09:52 แทนชุดที่สร้างตอนเช้า — ชื่อไฟล์เดิม ค่า SHA-256 ใหม่อยู่ใน `outputs\SHA256SUMS-Offline-v1.6.2.txt` (read-me และรายการ hash ของชุดเช้าเก็บไว้เป็น `*.previous-<เวลา>`)
+  - สร้างใหม่ (r4) ตอน 09:52 แทนชุดที่สร้างตอนเช้า และอีกครั้ง (r5) ตอน 14:11 ให้มีปุ่มลืมรหัสผ่าน/สมัครบัญชี — ชื่อไฟล์เดิม ค่า SHA-256 ใหม่อยู่ใน `outputs\SHA256SUMS-Offline-v1.6.2.txt` (read-me และรายการ hash ของชุดเช้าเก็บไว้เป็น `*.previous-<เวลา>`)
   - ไฟล์ runtime อยู่ที่ `G:\QwenSuite-offline-src-1.6.2\archives\ollama-runtime.7z` (ไฟล์ของ 1.6.1 ใน `offline\archives` ไม่ได้แก้)
   - ติดตั้งทับเครื่องที่ลง Offline 1.6.1 ไว้แล้ว ตัวติดตั้งอัปเดต Ollama ในชุด 0.32.15 → 0.40.15 ให้ (`Install-QwenSuite.ps1` ฟังก์ชัน `Update-OfflineOllamaRuntime`: หยุดเฉพาะ Ollama ที่รันจาก `<ชุด>\runtime\ollama`, เก็บของเดิมเป็น `runtime\ollama.old-<รุ่น>-<เวลา>`, ถ้าแตกไฟล์ไม่สำเร็จจะใส่ของเดิมคืนและติดตั้งต่อ)
     ทดสอบใน sandbox แล้ว: รุ่นเก่าที่กำลังรันถูกหยุด แทน และเก็บของเดิม · รุ่นล่าสุดอยู่แล้วไม่แตะ · เครื่องใหม่แตกไฟล์ให้ · ไฟล์เสียแล้วคืนของเดิม · Ollama ตัวจริงของเครื่องนี้ไม่ถูกแตะ
   - ตัวติดตั้ง Online 1.6.2 สร้างใหม่อีกรอบให้มีไฟล์ชุดเดียวกัน และคู่มือ `INSTALL-GUIDE-TH-1.6.2.txt` ครอบคลุมทั้ง Online และ Offline
-    (สร้างอีกครั้งรอบ r4 ให้มี watchdog และคู่มือฉบับล่าสุด · ไฟล์รอบก่อนเก็บไว้เป็น `*.previous-<เวลา>`)
-- การเปลี่ยนแปลงชุดนี้ **ยังไม่ได้ commit / push ขึ้น GitHub** — รอเจ้าของเครื่องอนุมัติ
+    (สร้างอีกครั้งรอบ r4 ให้มี watchdog และรอบ r5 ให้มีปุ่มลืมรหัสผ่าน/สมัครบัญชี พร้อมคู่มือฉบับล่าสุด · ไฟล์รอบก่อนเก็บไว้เป็น `*.previous-<เวลา>`)
+- การเปลี่ยนแปลงชุดนี้ commit และ push ขึ้น GitHub แล้ว (repo private) ตามที่เจ้าของเครื่องอนุมัติ · หน้า GitHub ภาษาอังกฤษ (`.github/README.md`) มีภาพแชตตัวอย่างและหน้าล็อกอินที่มีปุ่มใหม่
 
 ## อัปเดต 8 พ.ย. 2026 (Qwen Suite 1.6.2)
 
@@ -240,7 +262,8 @@ Ollama 0.32 เทียบค่าเหล่านี้ของคำข�
 > `ApplicationWebServer.exe` ครองพอร์ต 8080 อยู่แล้ว
 >
 > เปิดเฉพาะ `127.0.0.1` — เครื่องอื่นในเครือข่ายเข้าไม่ได้
-> ตั้งแต่ 1.6.1 (1 ต.ค. 2026) ต้องล็อกอิน: `start-webui.ps1` ตั้ง `WEBUI_AUTH='True'` และ `ENABLE_SIGNUP='False'` ·
+> ตั้งแต่ 1.6.1 (1 ต.ค. 2026) ต้องล็อกอิน: `start-webui.ps1` ตั้ง `WEBUI_AUTH='True'` · ตั้งแต่ 9 พ.ย. 2026 เปิดสมัครบัญชีใหม่แบบ "รออนุมัติ"
+> (`ENABLE_SIGNUP='True'`, `DEFAULT_USER_ROLE='pending'`) และมีปุ่ม "ลืมรหัสผ่าน?" — ดูหัวข้ออัปเดต 9 พ.ย. ·
 > บัญชีเริ่มต้นอีเมล `admin@localhost` / `P@ssw0rd` ใช้ล็อกอินครั้งแรกครั้งเดียว แล้วเปลี่ยนรหัสทันทีที่ Settings > Account
 > (ช่อง Email ไม่รับคำว่า `admin` เฉย ๆ — ดูหมายเหตุ 1.6.1 ด้านบนเรื่องฐานข้อมูลที่ยังเก็บอีเมลเป็น `admin`)
 

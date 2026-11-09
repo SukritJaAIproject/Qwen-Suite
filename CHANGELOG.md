@@ -2,6 +2,22 @@
 
 All notable changes to Qwen Suite, newest first. Dates are Bangkok time (UTC+7). Versions follow the installer releases. The owner's day-by-day notes, with more machine-specific detail, are in the Thai operations manual [README.md](README.md); the project overview is the [GitHub front page](.github/README.md).
 
+## [1.6.2] - 2026-11-09 (rebuild r5)
+
+### Added
+- **Forgot password on the Open WebUI sign-in page.** A "ลืมรหัสผ่าน?" (forgot password) button under the sign-in form opens a panel served by the local tools: `local-tools/account_recovery.py` and `local-tools/account.html`, with `/account/forgot`, `/account/reset` and `POST /account/api/forgot|token|reset` on `:8765` (local JSON requests only).
+  - The owner's account gets a single-use link, valid for 15 minutes, e-mailed from the owner's Gmail through SMTP with an App Password (STARTTLS on port 587, then 465). The link points at `127.0.0.1`, so it opens only on this PC. The token is in the URL fragment, and only its SHA-256 hash is stored.
+  - The new password (at least 8 characters, at most 72 bytes) is written as a bcrypt hash into Open WebUI's `auth` table for that one account, the way Open WebUI stores passwords itself.
+  - Only admin accounts with a recovery address are e-mailed; any other address gets the same neutral answer, and the owner resets other users in Admin Panel › Users. Limits: 3 links per account and 10 in total per hour, 60 seconds apart; 20 wrong links in 10 minutes pause the page. Events go to `data\account-recovery.log`, never passwords or tokens.
+  - One-time setup with `local-tools\Setup-RecoveryEmail.cmd`: the Gmail address, the App Password (shown as `*`; Ctrl+V pastes) and the address that receives the links. It sends a test e-mail before saving anything. The App Password is stored with Windows DPAPI for the current Windows user in `data\secrets\recovery-smtp.bin`, and the addresses in `data\account-recovery.json`. The setup needs no Open WebUI sign-in, so it also helps an owner who is already locked out.
+- **Sign up with the owner's approval.** A "สมัครบัญชีใหม่" (sign up) button opens Open WebUI's own sign-up form. Sign-up is on with new accounts as `pending` (`ENABLE_SIGNUP=True` and `DEFAULT_USER_ROLE=pending` in `start-webui.ps1`; `ui.enable_signup` and `ui.default_user_role` in `Configure-Qwen-WebUI.py`), so a new account can do nothing until the owner approves it in Admin Panel › Users.
+  - The owner is notified once per new account: a Windows toast and, when set up, a Telegram message (`notify_owner` in `local-tools/notifier.py`). The check runs every minute; `QWEN_ACCOUNT_WATCH=0` turns it off.
+
+### Changed
+- Approved users can chat with the suite's model presets (`share_presets_with_users` in `Configure-Qwen-WebUI.py` gives all users read access) but cannot use the PC's tools: the MCP tool servers stay owner-only, and `theme/qwen-account.js` hides the Permission Center, Video Studio and Projects & Tasks buttons for non-admin accounts and on the sign-in page. The `:8765` pages still have no sign-in of their own.
+- Tested before going live: 64 unit checks with the real bcrypt and DPAPI on this PC, 35 browser checks, and the database change applied to a copy and reverted exactly. The owner then reset a forgotten password through the e-mailed link.
+- Online and Offline 1.6.2 rebuilt (r5) with these files (`Qwen-Setup-Offline.exe` + 35 parts, 63.77 GiB; same file names as r4, new SHA-256 values). The install guide covers the recovery e-mail setup and sign-up approval. The installers contain no recovery settings or App Password: each PC sets up its own.
+
 ## [1.6.2] - 2026-11-09 (rebuild r4)
 
 ### Added

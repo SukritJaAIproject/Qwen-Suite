@@ -420,6 +420,51 @@ def notify_in_background(
     return thread
 
 
+def notify_owner(
+    heading: str,
+    text: str,
+    *,
+    channels: Iterable[str] | None = None,
+    dry_run: bool = False,
+    tag: str = "",
+) -> dict[str, Any]:
+    """Send one short notice to the owner (toast heading + text; Telegram text). Never raises.
+
+    For events that are not task ends, e.g. account notices from account_recovery.py. The same
+    notify.json switches, owner lookup, rate limit and log as notify(); the text is written by code.
+    """
+    try:
+        config = load_config()
+        wanted = [c for c in (CHANNELS if channels is None else channels) if c in CHANNELS]
+        active = [c for c in dict.fromkeys(wanted) if config.get(c)]
+        heading = _clean_title(heading)[:80]
+        body = re.sub(r"[\x00-\x09\x0b-\x1f\x7f]+", " ", str(text or "")).strip()[:600]
+        if not config.get("enabled") or not active:
+            reason = "disabled" if not config.get("enabled") else "no_channel"
+            _log({"task_id": tag, "status": "notice", "result": "skipped", "reason": reason})
+            return {"status": "skipped", "reason": reason, "channels": {}}
+        outcomes: dict[str, dict[str, Any]] = {}
+        with _SEND_LOCK:
+            if "toast" in active:
+                outcomes["toast"] = _send_toast(f"Qwen Suite — {heading}", body, dry_run)
+            if "telegram" in active:
+                outcomes["telegram"] = _send_telegram(f"{heading}: {body}", "", dry_run)
+        successes = sum(1 for outcome in outcomes.values() if outcome.get("ok"))
+        overall = ("dry_run" if dry_run else "sent") if successes == len(outcomes) else ("partial" if successes else "failed")
+        _log({
+            "task_id": tag,
+            "status": "notice",
+            "result": overall,
+            "dry_run": dry_run,
+            "title": heading,
+            "channels": {name: {k: v for k, v in outcome.items() if k != "ok"} for name, outcome in outcomes.items()},
+        })
+        return {"status": overall, "channels": {name: outcome.get("result") for name, outcome in outcomes.items()}}
+    except Exception as exc:  # a notice must never break its caller
+        _log({"task_id": tag, "status": "notice", "result": "failed", "error": type(exc).__name__})
+        return {"status": "failed", "reason": type(exc).__name__, "channels": {}}
+
+
 # --- Video Studio jobs ---------------------------------------------------------
 
 def video_job_is_final(job: dict[str, Any]) -> bool:

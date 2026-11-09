@@ -54,10 +54,12 @@ $env:CHUNK_OVERLAP = '120'
 $env:WEBUI_AUTH = 'True'
 $env:ENABLE_PASSWORD_AUTH = 'True'
 $env:ENABLE_LOGIN_FORM = 'True'
-$env:ENABLE_SIGNUP = 'False'
+$env:ENABLE_SIGNUP = 'True'
+$env:DEFAULT_USER_ROLE = 'pending'
 $env:ENABLE_INITIAL_ADMIN_SIGNUP = 'False'
-# Password login is required and self-registration is disabled. Only this machine's own
-# Open WebUI page may call the API from a browser.
+# Password login is required. Self-registration is on (9 Nov 2026) but a new account stays
+# "pending" until the owner approves it in Admin Panel > Users, and only admins reach the local
+# tools. Only this machine's own Open WebUI page may call the API from a browser.
 $env:CORS_ALLOW_ORIGIN = 'http://127.0.0.1:3000;http://localhost:3000'
 # Voice input: skip silence (local faster-whisper, model in model-cache). Thai is the owner's
 # default in Settings > Audio (set by Configure-Qwen-WebUI.py); WHISPER_LANGUAGE is not used
@@ -84,6 +86,8 @@ try {
     Copy-Item -LiteralPath (Join-Path $Root 'theme\qwen-auto-continue.js') -Destination (Join-Path $RuntimeStatic 'qwen-auto-continue.js') -Force
     Copy-Item -LiteralPath (Join-Path $Root 'theme\qwen-video-studio.js') -Destination (Join-Path $FrontendStatic 'qwen-video-studio.js') -Force
     Copy-Item -LiteralPath (Join-Path $Root 'theme\qwen-video-studio.js') -Destination (Join-Path $RuntimeStatic 'qwen-video-studio.js') -Force
+    Copy-Item -LiteralPath (Join-Path $Root 'theme\qwen-account.js') -Destination (Join-Path $FrontendStatic 'qwen-account.js') -Force
+    Copy-Item -LiteralPath (Join-Path $Root 'theme\qwen-account.js') -Destination (Join-Path $RuntimeStatic 'qwen-account.js') -Force
     $IndexPath = Join-Path $Frontend 'index.html'
     if (Test-Path -LiteralPath $IndexPath) {
         $Index = [IO.File]::ReadAllText($IndexPath)
@@ -105,6 +109,12 @@ try {
             $Index = [regex]::Replace($Index, '/static/qwen-video-studio\.js\?v=[^"'']+', '/static/qwen-video-studio.js?v=qwen-suite-v3')
         } elseif (-not $Index.Contains('/static/qwen-video-studio.js')) {
             $Index = $Index.Replace('</body>', '<script src="/static/qwen-video-studio.js?v=qwen-suite-v3" defer></script></body>')
+        }
+        # Sign-in page: "forgot password" and "register" buttons; suite buttons only for admins.
+        if ($Index -match '/static/qwen-account\.js\?v=[^"'']+') {
+            $Index = [regex]::Replace($Index, '/static/qwen-account\.js\?v=[^"'']+', '/static/qwen-account.js?v=qwen-suite-v1')
+        } elseif (-not $Index.Contains('/static/qwen-account.js')) {
+            $Index = $Index.Replace('</body>', '<script src="/static/qwen-account.js?v=qwen-suite-v1" defer></script></body>')
         }
         [IO.File]::WriteAllText($IndexPath, $Index, [Text.UTF8Encoding]::new($false))
     }

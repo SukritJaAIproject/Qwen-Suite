@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Qwen Suite · บัญชี Open WebUI</title>
+  <style>
+    :root{color-scheme:dark;--bg:#070a10;--panel:#101522;--panel2:#151b2a;--text:#eef2ff;--muted:#98a2ba;--line:#273149;--accent:#8b5cf6;--good:#34d399;--warn:#fbbf24;--bad:#fb7185}
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;background:radial-gradient(circle at 82% 0,#21164a 0,transparent 38%),var(--bg);color:var(--text);font:14px/1.6 Inter,"Noto Sans Thai","Segoe UI",sans-serif;display:grid;place-items:center;padding:24px 16px}
+    .card{width:min(440px,100%);background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:28px 26px;box-shadow:0 30px 80px rgba(0,0,0,.45)}
+    .brand{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;letter-spacing:.02em;margin-bottom:14px}
+    .brand b{display:grid;place-items:center;width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;font-size:13px}
+    h1{margin:0 0 6px;font-size:21px;line-height:1.3}
+    p{margin:0 0 14px;color:var(--muted)}
+    label{display:block;font-size:13px;color:var(--muted);margin:14px 0 6px}
+    .field{position:relative}
+    input{width:100%;padding:11px 13px;border-radius:11px;border:1px solid var(--line);background:#0b1019;color:var(--text);font:inherit;font-size:15px;outline:none}
+    input:focus{border-color:#6d5bd0;box-shadow:0 0 0 3px rgba(139,92,246,.18)}
+    .eye{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:transparent;border:0;color:var(--muted);cursor:pointer;padding:6px;font-size:12px}
+    button.main{width:100%;margin-top:18px;background:var(--accent);color:#fff;border:0;border-radius:11px;padding:12px 16px;font-family:inherit;font-weight:600;font-size:15px;line-height:1.2;cursor:pointer}
+    button.main:disabled{opacity:.55;cursor:default}
+    .msg{display:none;margin-top:16px;padding:11px 13px;border-radius:11px;background:var(--panel2);border:1px solid var(--line);font-size:13.5px}
+    .msg.show{display:block}.msg.ok{border-color:#1c5a45;color:#c9f7e5}.msg.bad{border-color:#6b2333;color:#ffd1da}.msg.warn{border-color:#5c4a14;color:#fde9b0}
+    .rules{font-size:12.5px;color:var(--muted);margin:8px 0 0;padding-left:18px}
+    .rules li.ok{color:var(--good)}
+    .foot{margin-top:18px;padding-top:14px;border-top:1px solid var(--line);font-size:12.5px;color:var(--muted);display:flex;flex-direction:column;gap:6px}
+    a{color:#c4b5fd;text-decoration:none}a:hover{text-decoration:underline}
+    code{background:#0b1019;border:1px solid var(--line);border-radius:6px;padding:1px 5px;font-size:12px}
+    .hidden{display:none!important}
+    .done{text-align:center}.done .big{font-size:40px;line-height:1;margin:6px 0 10px}
+    body.framed{background:transparent;padding:0;place-items:start center}body.framed .card{border:0;box-shadow:none;background:transparent;padding:30px 26px}
+  </style>
+</head>
+<body>
+<main class="card" id="card">
+  <div class="brand"><b>Q</b><span>Qwen Suite · Open WebUI</span></div>
+
+  <!-- forgot: ask for a link -->
+  <section id="forgot" class="hidden">
+    <h1>ลืมรหัสผ่าน</h1>
+    <p>กรอกอีเมลที่ใช้ล็อกอิน ระบบจะส่งลิงก์ตั้งรหัสผ่านใหม่ไปที่อีเมลกู้คืนของบัญชีเจ้าของ ลิงก์ใช้ได้ 15 นาที และเปิดได้เฉพาะบนเครื่องนี้</p>
+    <form id="forgotForm" novalidate>
+      <label for="email">อีเมลที่ใช้ล็อกอิน</label>
+      <input id="email" type="email" autocomplete="username" value="admin@localhost" required>
+      <button class="main" id="sendBtn" type="submit">ส่งลิงก์ตั้งรหัสใหม่</button>
+    </form>
+    <div id="forgotMsg" class="msg" role="status" aria-live="polite"></div>
+    <div class="foot">
+      <span>ยังไม่ได้ตั้งอีเมลกู้คืน? เจ้าของเครื่องรัน <code>local-tools\Setup-RecoveryEmail.cmd</code> ครั้งเดียว</span>
+      <span>บัญชีทั่วไป: ให้ผู้ดูแลตั้งรหัสใหม่ให้ใน Admin Panel &gt; Users</span>
+      <a href="http://127.0.0.1:3000/auth" target="_top">← กลับไปหน้าล็อกอิน</a>
+    </div>
+  </section>
+
+  <!-- reset: choose a new password -->
+  <section id="reset" class="hidden">
+    <h1>ตั้งรหัสผ่านใหม่</h1>
+    <p id="resetFor">กำลังตรวจลิงก์...</p>
+    <form id="resetForm" class="hidden" novalidate>
+      <input type="text" id="username" autocomplete="username" class="hidden" tabindex="-1" aria-hidden="true">
+      <label for="pw1">รหัสผ่านใหม่</label>
+      <div class="field"><input id="pw1" type="password" autocomplete="new-password" required><button class="eye" type="button" data-eye="pw1">แสดง</button></div>
+      <label for="pw2">พิมพ์รหัสผ่านใหม่อีกครั้ง</label>
+      <div class="field"><input id="pw2" type="password" autocomplete="new-password" required><button class="eye" type="button" data-eye="pw2">แสดง</button></div>
+      <ul class="rules">
+        <li id="ruleLen">อย่างน้อย 8 ตัวอักษร (ไม่เกิน 72 ไบต์)</li>
+        <li id="ruleSpace">ไม่ขึ้นต้นหรือลงท้ายด้วยช่องว่าง</li>
+        <li id="ruleSame">สองช่องตรงกัน</li>
+      </ul>
+      <button class="main" id="saveBtn" type="submit" disabled>บันทึกรหัสผ่านใหม่</button>
+    </form>
+    <div id="resetMsg" class="msg" role="status" aria-live="polite"></div>
+    <div class="foot" id="resetFoot">
+      <span id="expiry"></span>
+      <a href="/account/forgot">ขอลิงก์ใหม่</a>
+    </div>
+  </section>
+
+  <!-- reset done -->
+  <section id="done" class="hidden done">
+    <div class="big">✓</div>
+    <h1>ตั้งรหัสผ่านใหม่แล้ว</h1>
+    <p id="doneText"></p>
+    <a href="http://127.0.0.1:3000/auth" target="_top"><button class="main" type="button">ไปหน้าล็อกอิน</button></a>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const show = (el, on = true) => el.classList.toggle('hidden', !on);
+  const say = (el, text, kind) => { el.textContent = text; el.className = 'msg show ' + (kind || ''); };
+  const post = async (url, body) => {
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), credentials: 'omit', cache: 'no-store' });
+    let data = {};
+    try { data = await r.json(); } catch (e) { data = { ok: false, message: 'เซิร์ฟเวอร์ตอบกลับผิดรูปแบบ' }; }
+    if (!r.ok && !data.message) data.message = data.error || ('HTTP ' + r.status);
+    return data;
+  };
+  const bytes = s => new TextEncoder().encode(s).length;
+
+  if (location.pathname.replace(/\/+$/, '') === '/account/reset') {
+    show($('reset'));
+    const m = /(?:^|[#&])token=([A-Za-z0-9_-]{30,80})/.exec(location.hash || '');
+    const token = m ? m[1] : '';
+    // keep the token out of the address bar once it has been read
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
+    const fail = text => { $('resetFor').textContent = text; show($('resetForm'), false); };
+    if (!token) { fail('ลิงก์ไม่ครบ เปิดลิงก์จากอีเมลอีกครั้ง หรือขอลิงก์ใหม่'); return; }
+    let left = 0, timer = null;
+    const tick = () => {
+      if (left <= 0) { clearInterval(timer); fail('ลิงก์หมดอายุแล้ว ขอลิงก์ใหม่'); $('expiry').textContent = ''; return; }
+      $('expiry').textContent = 'ลิงก์หมดอายุในอีก ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + ' นาที';
+      left -= 1;
+    };
+    post('/account/api/token', { token }).then(info => {
+      if (!info.ok) { fail(info.message || 'ลิงก์ใช้ไม่ได้'); return; }
+      $('resetFor').textContent = 'บัญชี ' + info.email;
+      $('username').value = info.email;
+      show($('resetForm'));
+      left = Math.max(0, info.expires_in | 0); tick(); timer = setInterval(tick, 1000);
+      $('pw1').focus();
+    }).catch(() => fail('ติดต่อ Qwen Suite (127.0.0.1:8765) ไม่ได้'));
+    const check = () => {
+      const a = $('pw1').value, b = $('pw2').value;
+      const len = a.length >= 8 && bytes(a) <= 72, space = a.length > 0 && a === a.trim(), same = a.length > 0 && a === b;
+      $('ruleLen').classList.toggle('ok', len); $('ruleSpace').classList.toggle('ok', space); $('ruleSame').classList.toggle('ok', same);
+      $('saveBtn').disabled = !(len && space && same);
+    };
+    $('pw1').addEventListener('input', check); $('pw2').addEventListener('input', check);
+    document.querySelectorAll('[data-eye]').forEach(btn => btn.addEventListener('click', () => {
+      const input = $(btn.dataset.eye); const plain = input.type === 'password';
+      input.type = plain ? 'text' : 'password'; btn.textContent = plain ? 'ซ่อน' : 'แสดง';
+    }));
+    $('resetForm').addEventListener('submit', async ev => {
+      ev.preventDefault(); check(); if ($('saveBtn').disabled) return;
+      $('saveBtn').disabled = true; say($('resetMsg'), 'กำลังบันทึก...', '');
+      try {
+        const res = await post('/account/api/reset', { token, password: $('pw1').value });
+        if (res.ok) {
+          clearInterval(timer); $('pw1').value = ''; $('pw2').value = '';
+          show($('reset'), false); show($('done')); $('doneText').textContent = res.message || '';
+        } else { say($('resetMsg'), res.message || 'บันทึกไม่สำเร็จ', 'bad'); check(); }
+      } catch (e) { say($('resetMsg'), 'ติดต่อ Qwen Suite ไม่ได้ ลองอีกครั้ง', 'bad'); check(); }
+    });
+  } else {
+    show($('forgot'));
+    // inside Open WebUI's panel: Esc closes the panel (the key goes to this frame, not to Open WebUI)
+    if (window.parent !== window) {
+      const close = () => window.parent.postMessage({ qwenAccount: 'close' }, '*');
+      document.body.classList.add('framed');
+      window.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+      document.querySelector('#forgot .foot a').addEventListener('click', e => { e.preventDefault(); close(); });
+    }
+    $('forgotForm').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      const email = $('email').value.trim();
+      if (!email) { say($('forgotMsg'), 'กรอกอีเมลที่ใช้ล็อกอิน', 'warn'); return; }
+      $('sendBtn').disabled = true; say($('forgotMsg'), 'กำลังส่ง... (อาจใช้เวลาถึง 30 วินาที)', '');
+      try {
+        const res = await post('/account/api/forgot', { email });
+        say($('forgotMsg'), res.message || (res.ok ? 'ส่งแล้ว' : 'ส่งไม่สำเร็จ'), res.ok ? (res.sent ? 'ok' : '') : (res.reason === 'rate_limited' ? 'warn' : 'bad'));
+      } catch (e) { say($('forgotMsg'), 'ติดต่อ Qwen Suite (127.0.0.1:8765) ไม่ได้', 'bad'); }
+      setTimeout(() => { $('sendBtn').disabled = false; }, 3000);
+    });
+  }
+})();
+</script>
+</body>
+</html>

@@ -30,6 +30,7 @@ import hooks
 import notifier
 import path_manager_api as PATH_UI
 import suite_health as HEALTH
+import account_recovery as ACCOUNT
 
 
 HOST = "127.0.0.1"
@@ -550,6 +551,66 @@ async def suite_status_state(request: Request) -> JSONResponse:
         return JSONResponse({"ok": True, **report})
     except Exception as exc:
         return _api_error(exc, 403 if isinstance(exc, PermissionError) else 400)
+
+
+# --- Account help for Open WebUI: "forgot password" by e-mail (account_recovery.py) -----------------
+# The reset link carries its token in the URL fragment (#token=...), so it never reaches a request
+# line or an access log; the page posts it. Only this server's own Host names, JSON, and no foreign Origin.
+ACCOUNT_HTML = Path(__file__).with_name("account.html")
+_OPEN_WEBUI_ORIGINS = "http://127.0.0.1:3000 http://localhost:3000"
+
+
+def _account_page(request: Request, frame_ancestors: str) -> HTMLResponse:
+    if request.headers.get("host", "").lower() not in _STATUS_HOSTS:
+        return HTMLResponse("host not allowed", status_code=403)
+    if not ACCOUNT_HTML.exists():
+        return HTMLResponse("Account page is missing.", status_code=500)
+    return HTMLResponse(ACCOUNT_HTML.read_text(encoding="utf-8"), headers={
+        "Cache-Control": "no-store",
+        "Referrer-Policy": "no-referrer",
+        "Content-Security-Policy": f"frame-ancestors {frame_ancestors}",
+    })
+
+
+@mcp.custom_route("/account/forgot", methods=["GET"], include_in_schema=False)
+async def account_forgot_page(request: Request) -> HTMLResponse:
+    # Shown inside Open WebUI's sign-in page (qwen-account.js overlay) or on its own.
+    return _account_page(request, _OPEN_WEBUI_ORIGINS)
+
+
+@mcp.custom_route("/account/reset", methods=["GET"], include_in_schema=False)
+async def account_reset_page(request: Request) -> HTMLResponse:
+    return _account_page(request, "'none'")
+
+
+async def _account_api(request: Request, fn: Any, *fields: str) -> JSONResponse:
+    try:
+        if request.headers.get("host", "").lower() not in _STATUS_HOSTS:
+            raise PermissionError("host not allowed")
+        _require_local_json(request)
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("a JSON object is required")
+        values = [str(body.get(name) or "")[:512] for name in fields]
+        result = await run_in_threadpool(fn, *values)
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+    except Exception as exc:
+        return _api_error(exc, 403 if isinstance(exc, PermissionError) else 400)
+
+
+@mcp.custom_route("/account/api/forgot", methods=["POST"], include_in_schema=False)
+async def account_api_forgot(request: Request) -> JSONResponse:
+    return await _account_api(request, ACCOUNT.request_reset, "email")
+
+
+@mcp.custom_route("/account/api/token", methods=["POST"], include_in_schema=False)
+async def account_api_token(request: Request) -> JSONResponse:
+    return await _account_api(request, ACCOUNT.token_info, "token")
+
+
+@mcp.custom_route("/account/api/reset", methods=["POST"], include_in_schema=False)
+async def account_api_reset(request: Request) -> JSONResponse:
+    return await _account_api(request, ACCOUNT.complete_reset, "token", "password")
 
 
 @mcp.custom_route("/path-manager/api/projects", methods=["GET"], include_in_schema=False)
@@ -2953,6 +3014,12 @@ if __name__ == "__main__":
         import channel_watchdog
 
         channel_watchdog.start_background()
+    except Exception:
+        pass
+    # Self-registered Open WebUI accounts wait as "pending": tell the owner once per account
+    # (toast + Telegram) - account_recovery.py; off with QWEN_ACCOUNT_WATCH=0.
+    try:
+        ACCOUNT.start_background()
     except Exception:
         pass
     mcp.run(transport="streamable-http")

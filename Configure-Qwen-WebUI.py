@@ -334,6 +334,35 @@ def wait_for_database(path: Path, timeout: int = 240) -> None:
     raise TimeoutError(f"Open WebUI database was not ready: {path}")
 
 
+def share_presets_with_users(connection: sqlite3.Connection, model_ids, now: int) -> int:
+    """Give every signed-in account read access to the suite's presets (Open WebUI 0.11 grant "user:*").
+
+    Without a grant Open WebUI 0.11 shows a preset to admins only, so an approved self-registered
+    account would see no model. Only the presets in MODEL_PROFILES are shared; presets made by hand
+    stay private. Grants that already exist are kept as they are. Returns the number of new grants.
+    """
+    has_table = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='access_grant'"
+    ).fetchone()
+    if not has_table:
+        return 0
+    added = 0
+    for model_id in model_ids:
+        if not connection.execute("SELECT 1 FROM model WHERE id=?", (model_id,)).fetchone():
+            continue
+        cursor = connection.execute(
+            """
+            INSERT INTO access_grant
+              (id, resource_type, resource_id, principal_type, principal_id, permission, created_at)
+            VALUES (?, 'model', ?, 'user', '*', 'read', ?)
+            ON CONFLICT DO NOTHING
+            """,
+            (str(uuid.uuid4()), model_id, now),
+        )
+        added += cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+    return added
+
+
 def set_config(connection: sqlite3.Connection, key: str, value: object, now: int) -> None:
     connection.execute(
         """
@@ -564,6 +593,7 @@ def configure(db_path: Path) -> dict[str, object]:
                 ),
             )
         extra_presets = apply_builtin_tools(connection, EXTRA_PRESET_IDS, now)
+        shared_presets = share_presets_with_users(connection, [item[0] for item in MODEL_PROFILES], now)
         prompts = upsert_prompts(connection, owner_id, now)
 
         tool_connections = [
@@ -637,7 +667,12 @@ def configure(db_path: Path) -> dict[str, object]:
             if item["auth_type"] == "oauth_2.1" and old_info.get("oauth_client_info"):
                 item["info"]["oauth_client_info"] = old_info["oauth_client_info"]
         settings = {
-            "ui.enable_signup": False,
+            # 9 Nov 2026: "Register" on the sign-in page. Self-registered accounts wait as "pending" until
+            # the owner approves them in Admin Panel > Users (local-tools/account_recovery.py tells the
+            # owner); approved accounts can chat with the presets below but get no local tools - every
+            # tool server connection keeps access_grants [] (Open WebUI 0.11: admin only).
+            "ui.enable_signup": True,
+            "ui.default_user_role": "pending",
             "ui.enable_login_form": True,
             "ollama.enable": True,
             "ollama.base_urls": ["http://127.0.0.1:8770", "http://127.0.0.1:11434"],
@@ -729,6 +764,7 @@ def configure(db_path: Path) -> dict[str, object]:
             "tools": [item["info"]["id"] for item in tool_connections if item["config"].get("enable")],
             "builtin_tools_off": sorted(BUILTIN_TOOLS_OFF),
             "extra_presets": extra_presets,
+            "shared_presets": shared_presets,
             "prompts": prompts,
             "backup": str(backup_path),
         }
