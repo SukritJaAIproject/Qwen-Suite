@@ -375,7 +375,7 @@ Two buttons sit under the Open WebUI sign-in form: "ลืมรหัสผ่�
 <details>
 <summary><b>Installers</b></summary>
 
-- The Online and Offline installers (current release **1.6.2**, 9 November 2026) are built from a separate installer project and distributed separately. They are **not** part of this repository.
+- The Online and Offline installers (current release **1.6.2**, rebuild r6 of 10 November 2026) are built from a separate installer project and distributed separately. They are **not** part of this repository.
   - **Online:** installs the runtimes with winget and downloads the models. An optional *extra models* task adds `qwen3.6:35b`, `gemma4:26b-a4b-it-qat` and `mimo-v2.6:9b`. Each one is skipped, with a warning, if the drive lacks room for it plus a 15 GB reserve, and MiMo is skipped on an Ollama older than 0.40.15.
   - **Offline:** `Qwen-Setup-Offline.exe` plus 35 parts (63.77 GiB) with the Ollama 0.40.15 runtime, the five main models and Qwen Suite Desktop. Installing it over an Offline 1.6.1 install also updates the bundled Ollama runtime: only the suite's own Ollama processes are stopped, the old runtime is kept as `runtime\ollama.old-<version>-<time>`, and it is put back if unpacking fails.
 - The installers run `Configure-Qwen-WebUI.py` and `Configure-OpenClaw.py` from this repository to apply the suite's settings.
@@ -386,7 +386,7 @@ Two buttons sit under the Open WebUI sign-in form: "ลืมรหัสผ่�
 
 | | |
 |---|---|
-| **Current release** | 1.6.2 (Online and Offline installers, 9 November 2026) |
+| **Current release** | 1.6.2 (Online and Offline installers, rebuild r6 of 10 November 2026) |
 | **Platform** | Windows 10 (tested) or 11, 64-bit, Windows PowerShell 5.1 |
 | **Reference machine** | Dell Precision 3551: Intel i7-10750H (6 cores), 64 GB RAM, Quadro P620 4 GB; an RTX eGPU over Thunderbolt 3 is supported |
 | **Main models** | `qwen3.8:27b` (general, vision), `qwen3-coder:30b` (code), `muse-glimmer:30b` (agent, review), `granite4.2:8b` (fast, structured, RAG), `qwen3-embedding:4b` (embeddings) |
@@ -399,7 +399,7 @@ Two buttons sit under the Open WebUI sign-in form: "ลืมรหัสผ่�
 
 Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
 
-- **Thai or English interface** (10 November 2026, in the live suite; the next installer build will include it): a ไทย | EN switch on every suite page and in Qwen Suite Desktop. The pages are still written in Thai, and `local-tools/ui_i18n.js` translates them, including the server's messages, in the browser. Thai is the default.
+- **Thai or English interface** (rebuild r6, 10 November 2026): a ไทย | EN switch on every suite page and in Qwen Suite Desktop. The pages are still written in Thai, and `local-tools/ui_i18n.js` translates them, including the server's messages, in the browser. Thai is the default.
 - **Account help on the sign-in page** (rebuild r5): a forgot-password link by e-mail for the owner, and sign-up with the owner's approval.
 - **Project sync into Open WebUI works again.** The tools use the owner's own Open WebUI API key, limited to the folders, memories and files endpoints, and catch up in the background.
 - **Telegram and WhatsApp reconnect by themselves** after a network outage: a new channel watchdog restarts a channel that OpenClaw gave up on, once the internet is back.
@@ -407,7 +407,7 @@ Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
 - **Ollama 0.40.15** and three extra models you can pick directly: Qwen3.6 35B-A3B, Gemma 4 26B-A4B and the official MiMo-V2.6 9B.
 - **AI video clips** with the new `generate_ai_video` tool and the optional Wan 2.2 pack.
 - **Qwen Suite Desktop**, one window for chat, permissions, compute device, Video Studio and status.
-- **Installers 1.6.2:** a rebuilt Online installer and a new Offline installer that also updates the bundled Ollama runtime when it installs over Offline 1.6.1. Both were rebuilt again (r5) with the account help.
+- **Installers 1.6.2:** a rebuilt Online installer and a new Offline installer that also updates the bundled Ollama runtime when it installs over Offline 1.6.1. Both were rebuilt again with the account help (r5) and with the Thai or English interface (r6).
 
 ## Architecture
 
@@ -685,7 +685,7 @@ LICENSE                 MIT License for the suite's own code
 
 The full release history is in [CHANGELOG.md](../CHANGELOG.md):
 
-- **Unreleased** (10 November 2026): Thai or English interface for the suite pages and Qwen Suite Desktop; screenshots in English.
+- **1.6.2 rebuild r6** (10 November 2026): Thai or English interface for the suite pages and Qwen Suite Desktop, in both installers; screenshots in English.
 - **1.6.2** (8–9 November 2026): Project sync fix, channel watchdog, account help (forgot password, sign-up with approval), Ollama 0.40.15, extra models, AI video clips, Qwen Suite Desktop, Online and Offline installers.
 - **1.6.1** (1–7 October 2026): Open WebUI sign-in, the `admin@localhost` owner account, the models check on the health dashboard.
 - **1.6** (1 October 2026): Muse Glimmer and Granite take over the agent, review, fast and structured roles; optional local Qwen-Image.

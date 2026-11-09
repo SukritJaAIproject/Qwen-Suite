@@ -2,7 +2,7 @@
 
 All notable changes to Qwen Suite, newest first. Dates are Bangkok time (UTC+7). Versions follow the installer releases. The owner's day-by-day notes, with more machine-specific detail, are in the Thai operations manual [README.md](README.md); the project overview is the [GitHub front page](.github/README.md).
 
-## [Unreleased] - 2026-11-10
+## [1.6.2] - 2026-11-10 (rebuild r6)
 
 ### Added
 - **Thai or English interface.** The suite pages (status, Permission Center, compute device, Video Studio, Projects & Tasks, forgot password) are still written in Thai; `local-tools/ui_i18n.js` translates a page to English in the browser when English is chosen.
@@ -16,7 +16,7 @@ All notable changes to Qwen Suite, newest first. Dates are Bangkok time (UTC+7).
 - `start-webui.ps1` loads the add-ons as v3 (Projects & Tasks), v4 (Permissions), v5 (Video Studio) and v2 (account), and now replaces the `?v=` of every add-on on each start, so a browser never keeps an old copy.
 - The GitHub front page screenshots were taken again with the interface in English.
 - Tested before going live: every page with the live API answers in a browser (Thai unchanged; in English no Thai left apart from what people typed), the alert/confirm texts and the switch, the new server routes, the add-ons in both languages, and a desktop app build with its self-test. Backups: `backups\pre-i18n-20261110-004648` and the smaller `pre-i18n-js`, `pre-i18n-css` and `pre-i18n-update2` folders.
-- The 1.6.2 (r5) installers do not include this yet; their payload folder is up to date for the next build.
+- Online and Offline 1.6.2 rebuilt (r6) with these files (`Qwen-Setup-Offline.exe` + 35 parts, 63.77 GiB; same file names as r5, new SHA-256 values). The install guide and both read-me files describe the ไทย | EN switch. The installers do not include this PC's language choice (`data/ui-language.json`), so a new install starts in Thai.
 
 ### Fixed
 - The 13 outbound OpenClaw messages that had failed for good (queue `outbound-prepared-v1`, oldest from 16 September 2026) were removed after stopping the gateway and backing up its state database. The health dashboard no longer counts them.
