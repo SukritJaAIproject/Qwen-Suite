@@ -9,6 +9,7 @@
 !/.gitattributes
 !/GIT-README.txt
 !/README.md
+!/CHANGELOG.md
 !/LICENSE
 !/*.ps1
 !/Configure-*.py
