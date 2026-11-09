@@ -1,48 +1,97 @@
+<div align="center">
+
 # Qwen Suite
+
+**A private, local-first AI workstation for Windows**
+
+Local LLMs on Ollama and Open WebUI · 72 tools behind a permission gateway<br>
+Telegram, WhatsApp and LINE · Video Studio · Codex · every service on `127.0.0.1`
 
 ![Version 1.6.2](https://img.shields.io/badge/version-1.6.2-2f6feb)
 ![Windows 10 | 11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6)
-![Ollama 0.40.15](https://img.shields.io/badge/Ollama-0.40.15-111111)
+![Ollama 0.40.15](https://img.shields.io/badge/Ollama-0.40.15-0f766e)
 ![Open WebUI 0.11](https://img.shields.io/badge/Open%20WebUI-0.11-6e7781)
 ![72 MCP tools](https://img.shields.io/badge/MCP%20tools-72-8250df)
 ![MIT License](https://img.shields.io/badge/license-MIT-2da44e)
 
-Qwen Suite is a local, single-user AI workstation for Windows. It connects Ollama and Open WebUI to a set of Python and PowerShell services that run only on `127.0.0.1`: a model router, a reranker, MCP tool servers behind a permission gateway, a video pipeline, a web-research worker, a document knowledge base, Outlook read/draft tools and a bridge for the Codex CLI. Telegram and WhatsApp use the same tools through the OpenClaw gateway, and a watchdog reconnects them after a network outage. An optional text-only gateway can be reached from the internet, and Qwen Suite Desktop puts the local pages in one window. The suite was built for one CPU-only Windows 10 laptop, and most of the user interface is in Thai. This repository contains the suite's own scripts and services only. Runtimes, models, user data and the installers are not included.
+<a href="#screenshots"><img src="../docs/screenshots/cards/hero.png" alt="Qwen Suite: Video Studio in front of the Health dashboard and the Permission Center" width="100%"></a>
 
-> **Status:** personal project, Windows only, with paths hard-coded to `E:\localllm`. Read [Project status and limitations](#project-status-and-limitations) before you try to run it. The owner's detailed operations manual (Thai) is [`README.md`](../README.md) in the repository root, and the release history is in [`CHANGELOG.md`](../CHANGELOG.md).
->
-> **Unofficial project.** Not affiliated with or endorsed by Alibaba Cloud / Qwen, Google, IBM, Meta, Xiaomi, Ollama, Open WebUI, OpenClaw, OpenAI (Codex), Runway or ComfyUI. Product names belong to their owners.
+**[Screenshots](#screenshots)** · **[Features](#features)** · **[What's new](#whats-new-in-162)** · **[Architecture](#architecture)** · **[Installation](#installation)** · **[Security](#security-model)** · **[Changelog](../CHANGELOG.md)**
 
-**Contents:** [What's new](#whats-new-in-162) · [At a glance](#at-a-glance) · [Features](#features) · [Architecture](#architecture) · [Screenshots](#screenshots) · [Requirements](#requirements) · [Installation](#installation) · [Configuration](#configuration) · [Security model](#security-model) · [Licences](#model-and-component-licences) · [Status and limitations](#project-status-and-limitations) · [Repository layout](#repository-layout) · [Changelog](#changelog) · [License](#license)
+</div>
 
-## What's new in 1.6.2
+Qwen Suite is a local, single-user AI workstation for Windows. It connects Ollama and Open WebUI to Python and PowerShell services that run only on `127.0.0.1`: a model router, a reranker, MCP tool servers behind a permission gateway, a video pipeline, a research worker, a document knowledge base, Outlook tools and a bridge for the Codex CLI. Telegram and WhatsApp reach the same tools through the OpenClaw gateway. This repository holds the suite's own scripts and services; runtimes, models, user data and the installers are not included.
 
-Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
+> [!NOTE]
+> A personal project for one CPU-only Windows 10 laptop, with paths hard-coded to `E:\localllm`, and most of the interface is in Thai. Read [Project status and limitations](#project-status-and-limitations) before you try to run it. The owner's detailed operations manual (Thai) is [`README.md`](../README.md).
 
-- **Project sync into Open WebUI works again.** It broke in 1.6.1 when Open WebUI started requiring a sign-in. The tools now use the owner's own Open WebUI API key, limited to the folders, memories and files endpoints, and catch up in the background ([Local tools](#local-tools-and-permission-gateway), [Security model](#security-model)).
-- **Telegram and WhatsApp reconnect by themselves** after a network outage. A new channel watchdog restarts a channel that OpenClaw gave up on, once the internet is back ([Telegram and WhatsApp](#telegram-and-whatsapp-via-openclaw)).
-- **Health dashboard:** Telegram/WhatsApp and the OpenClaw automations are read reliably even when the OpenClaw CLI is slow, an outage is reported at the time it really happened, and a new check covers Project sync ([Health dashboard](#health-dashboard)).
-- **Ollama 0.40.15** (from 0.32.15, tested in a sandbox first) and three extra models you can pick directly: Qwen3.6 35B-A3B, Gemma 4 26B-A4B and the official MiMo-V2.6 9B ([Chat and model routing](#chat-and-model-routing)).
-- **AI video clips** with the new `generate_ai_video` tool (tool 72) and the optional Wan 2.2 pack ([AI video clips](#ai-video-clips-optional-wan-22-pack)).
-- **Qwen Suite Desktop**, a single window for chat, permissions, compute device, Video Studio and status ([Qwen Suite Desktop](#qwen-suite-desktop)).
-- **Installers 1.6.2:** a rebuilt Online installer and a new Offline installer that also updates the bundled Ollama runtime when it installs over Offline 1.6.1 ([Installers](#installers)).
+## Screenshots
 
-## At a glance
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="../docs/screenshots/health-dashboard.png"><img src="../docs/screenshots/cards/health-dashboard.png" alt="Health dashboard" width="100%"></a>
+      <p><b>Health dashboard</b> &nbsp;<code>/status</code><br>
+      <sub>Overall status with the open warnings, every port, what Ollama is doing and the GPU path.</sub></p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="../docs/screenshots/permission-center.png"><img src="../docs/screenshots/cards/permission-center.png" alt="Permission Center" width="100%"></a>
+      <p><b>Permission Center</b> &nbsp;<code>/permissions</code><br>
+      <sub>Allow, ask or deny for each capability, separately for Open WebUI and for Telegram/WhatsApp, with scoped rules and an audit log.</sub></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="../docs/screenshots/compute-center.png"><img src="../docs/screenshots/cards/compute-center.png" alt="Compute device selector" width="100%"></a>
+      <p><b>Compute device</b> &nbsp;<code>/compute</code><br>
+      <sub>Automatic, CPU-only or a chosen GPU for Ollama, and per-model CPU pins.</sub></p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="../docs/screenshots/projects-and-tasks.png"><img src="../docs/screenshots/cards/projects-and-tasks.png" alt="Projects and Tasks" width="100%"></a>
+      <p><b>Projects &amp; Tasks</b> &nbsp;<code>/path-manager</code><br>
+      <sub>The current project with its allowed paths and actions, the task monitor, recent file changes and finished jobs.</sub></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="../docs/screenshots/video-studio.png"><img src="../docs/screenshots/cards/video-studio.png" alt="Video Studio" width="100%"></a>
+      <p><b>Video Studio</b> &nbsp;<code>/video-studio</code><br>
+      <sub>One prompt becomes a monitored job: storyboard, scenes, narration, music, subtitles, MP4 and QA, with resumable checkpoints.</sub></p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="../docs/screenshots/cards/desktop-app-status.png"><img src="../docs/screenshots/cards/desktop-app-status.png" alt="Qwen Suite Desktop on the status tab" width="100%"></a>
+      <p><b>Qwen Suite Desktop</b><br>
+      <sub>One window with tabs for chat, Permission Center, compute device, Video Studio and status.</sub></p>
+    </td>
+  </tr>
+</table>
 
-| | |
-|---|---|
-| **Current release** | 1.6.2 (Online and Offline installers, 9 November 2026) |
-| **Platform** | Windows 10 (tested) or 11, 64-bit, Windows PowerShell 5.1 |
-| **Reference machine** | Dell Precision 3551: Intel i7-10750H (6 cores), 64 GB RAM, Quadro P620 4 GB; an RTX eGPU over Thunderbolt 3 is supported |
-| **Main models** | `qwen3.8:27b` (general, vision), `qwen3-coder:30b` (code), `muse-glimmer:30b` (agent, review), `granite4.2:8b` (fast, structured, RAG), `qwen3-embedding:4b` (embeddings) |
-| **Extra models** | `qwen3.6:35b`, `gemma4:26b-a4b-it-qat`, `mimo-v2.6:9b` (optional, picked directly) |
-| **Tools** | 72 MCP tools on `:8765`, reached through two small permission gateways |
-| **Channels** | Open WebUI and Qwen Suite Desktop on this PC; Telegram, WhatsApp and LINE through OpenClaw; a text-only internet gateway |
-| **Network exposure** | Every service binds `127.0.0.1`; only the text-only gateway is published, through a Cloudflare quick tunnel |
+<sub>From the reference machine on 9 November 2026 (release 1.6.2). The interface is in Thai. Click a screenshot to open the full page. Some project names and paths, and a GPU ID, are blurred.</sub>
 
 ## Features
 
-### Chat and model routing
+| | Area | What you get |
+|---|---|---|
+| 💬 | **Chat** | Open WebUI with sign-in, a Smart Model Router with seven profiles, RAG with a local reranker, three extra models |
+| 🧰 | **Local tools** | 72 MCP tools (files, projects, commands, Office and PDF, charts, reminders, screenshots) behind a Permission Center |
+| 🎬 | **Video** | Video Studio turns one prompt into a narrated MP4; the optional Wan 2.2 pack makes short AI clips on a CUDA GPU |
+| 🔎 | **Research and knowledge** | Unattended web research to a cited Word report; keyword search over document collections |
+| 🖼️ | **Images** | Image generation with the local Qwen-Image pack or Runway, with clear fallback rules |
+| 📨 | **Outlook** | Agenda, mail search and drafts only; a morning brief on Telegram at 07:00 |
+| 🤖 | **Codex bridge** | The Codex CLI on the local coder model, read-only by default, guarded by the command policy |
+| 📱 | **Telegram, WhatsApp, LINE** | The same tools through OpenClaw, local voice notes and Thai speech, automatic reconnect after outages |
+| 🌐 | **Remote access** | A text-only internet gateway behind a Cloudflare quick tunnel |
+| 🩺 | **Health dashboard** | One read-only report: ports, Ollama, GPU, models, disk, channels, automations, sync, installers |
+| ⚡ | **eGPU and CPU** | The right GPU at every Ollama start, with manual and per-model overrides |
+| 🖥️ | **Desktop app** | Qwen Suite Desktop: one window for chat and the local pages |
+| 📦 | **Installers** | Online and Offline 1.6.2, built by a separate project |
+
+### Feature details
+
+Click a name to open it.
+
+<details>
+<summary><b>Chat and model routing</b></summary>
 
 - Open WebUI 0.11 runs at `http://127.0.0.1:3000`. Sign-in is required and self-registration is turned off.
 - The **Smart Model Router** (`:8770`) speaks the Ollama API and adds seven model profiles: `qwen-auto`, `qwen-general`, `qwen-code`, `qwen-fast`, `qwen-structured`, `qwen-agent` and `qwen-review`.
@@ -76,7 +125,10 @@ Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
 - Voice input uses local faster-whisper with VAD. `ai-services/dictate.ps1` adds push-to-talk dictation anywhere in Windows (Ctrl+Alt+D through its Start Menu shortcut): it records the microphone, transcribes locally, copies the text to the clipboard and deletes the audio.
 - Scripts added to Open WebUI: a dark theme, auto-continue for answers that were cut off (up to 6 segments) and buttons that open Projects & Tasks, Permission Center and Video Studio.
 
-### Local tools and permission gateway
+</details>
+
+<details>
+<summary><b>Local tools and permission gateway</b></summary>
 
 - `local-tools/server.py` (`:8765`) is an MCP server with **72 tools**. They cover files, projects and project memory, commands, background tasks, media, AI video clips, Office documents, PDFs, charts, reminders, research, Codex jobs, knowledge search, Outlook, screenshots, image generation, compute selection, suite status and web search.
 - Two compact MCP gateways (`local-tools/fast_server.py`) expose only `local_read` and `local_action`. Port `:8766` serves Open WebUI and port `:8767` serves OpenClaw. Every call goes to `/gateway/dispatch` on `:8765`, where the **Permission Center** applies the policy for that source. `local_read` can batch up to five reads, and `action=help` returns the action catalogue. Keeping the always-attached schema small matters on a CPU: it shrank from 13,077 to 907 bytes.
@@ -95,7 +147,10 @@ Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
 - **Reminders:** a Thai/English time parser, delivered to Telegram by an OpenClaw automation with no model call.
 - **Screenshots:** `capture_screen` saves a PNG to the project's outputs folder.
 
-### Video Studio
+</details>
+
+<details>
+<summary><b>Video Studio</b></summary>
 
 - A single prompt starts one monitored job, either through `generate_video` or at `http://127.0.0.1:8765/video-studio`. The job runs these steps:
   1. **Storyboard:**
@@ -111,7 +166,10 @@ Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
 - Six visual styles are available.
 - Each step leaves a checkpoint. Failed jobs resume automatically, up to three attempts. A supervisor keeps the Open WebUI chat attached to the job across page refreshes.
 
-### AI video clips (optional Wan 2.2 pack)
+</details>
+
+<details>
+<summary><b>AI video clips (optional Wan 2.2 pack)</b></summary>
 
 - `generate_ai_video` (`local-tools/video_gen.py`) makes short AI clips on the PC: 1–5 seconds, 1280×704 or 704×1280, 24 fps, no sound. Clips are saved to the project's outputs folder.
 - It runs **Wan2.2 TI2V-5B** on **ComfyUI** (`127.0.0.1:8190`), which starts on first use and frees the GPU memory after every clip.
@@ -120,7 +178,10 @@ Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
 - A clip takes several minutes, so the tool returns `status=running` with a `task_id`; call it again with the same `task_id` to collect the result.
 - Permission category: media editing (`media_write`).
 
-### Research
+</details>
+
+<details>
+<summary><b>Research</b></summary>
 
 - `start_research` runs unattended web research and produces a Word report:
   1. Search DuckDuckGo through `ddgs`.
@@ -130,7 +191,10 @@ Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
   5. Check citations: every `[n]` must point to a page that was actually fetched. The reference list is built by code, not by the model.
 - The model phase waits until Ollama has been idle for 15 minutes, or for the 01:00-05:00 window. Checkpoints allow `resume_id`. Up to 3 jobs can be active at once.
 
-### Image generation
+</details>
+
+<details>
+<summary><b>Image generation</b></summary>
 
 - `generate_image` takes `provider=auto|local|runway`:
   - **Local:** Qwen-Image 2.1 is used only when its optional pack is installed. The pack records the install after a CUDA check passes. The pack is not part of this repository.
@@ -138,7 +202,10 @@ Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
   - **Fallback rules:** `auto` falls back to Runway only when the local pack cannot run (no CUDA, out of memory) and the request has no `seed` and no local reference image. `local` never falls back.
 - Open WebUI is also set up with two Runway MCP connections. The owner signs in with OAuth after installation.
 
-### Knowledge base
+</details>
+
+<details>
+<summary><b>Knowledge base</b></summary>
 
 - A BM25 keyword index over PDF, DOCX, XLSX/XLSM, PPTX and text files:
   - Thai text is indexed as character trigrams and CJK as bigrams.
@@ -148,7 +215,10 @@ Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
   - Source files are opened read-only.
 - Queries need no model and return file, page, sheet and row locators. They are available through `search_knowledge` and `list_knowledge` in chat, or the `knowledge_base.py build|search|create|list` CLI.
 
-### Outlook
+</details>
+
+<details>
+<summary><b>Outlook</b></summary>
 
 - Uses classic Outlook through COM:
   - Calendar agenda for up to 14 days.
@@ -157,7 +227,10 @@ Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
 - Every COM call runs in a child process with a 45-second limit. Mail and calendar text is labelled as untrusted for the model.
 - **Morning brief:** `local-tools/morning_brief.py` prints a fixed-format Thai summary with no model involved: the date, today's calendar, unread mail, reminders and a one-line suite status. It is meant to run as an OpenClaw automation (`qwen-morning-brief`, 07:00) that posts to Telegram.
 
-### Codex bridge
+</details>
+
+<details>
+<summary><b>Codex bridge</b></summary>
 
 - `local-tools/codex/` runs the OpenAI Codex CLI against local Ollama (`qwen3-coder:30b`), with its own `CODEX_HOME` generated from a template:
   - Analytics, web search and cloud features are off.
@@ -172,7 +245,10 @@ Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
 - **Policy hook:** a `PreToolUse` hook (`policy_hook.py`) applies the same command policy as `run_command`. The bridge self-tests the hook and checks its trust before every job, and refuses write jobs if either check fails.
 - **From chat:** `start_codex_job`, `get_codex_job` and `list_codex_jobs`. Jobs from chat are refused in the suite folder, the profile root, AppData, drive roots and secret folders. If a job touched a secret path, its answer is not shown in chat; in other answers, strings that look like secrets are masked.
 
-### Telegram and WhatsApp via OpenClaw
+</details>
+
+<details>
+<summary><b>Telegram and WhatsApp via OpenClaw</b></summary>
 
 - `Configure-OpenClaw.py` writes the OpenClaw configuration:
   - Agent `qwenlocal` on `ollama/qwen-auto:latest`, routed through `:8770`.
@@ -192,7 +268,10 @@ Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
   - It never touches a session that was logged out or replaced (WhatsApp codes 401, 403, 411, 440, 500), a channel that OpenClaw is still reconnecting, or a channel stopped by hand. The health dashboard asks for a new QR login instead.
   - It records times, channel names and outcomes only, in `logs\channel-watchdog.log` and `data\channel-watchdog.json`. Set `QWEN_CHANNEL_WATCHDOG=0` to turn it off.
 
-### Remote access via the internet gateway
+</details>
+
+<details>
+<summary><b>Remote access via the internet gateway</b></summary>
 
 - `internet-gateway/server.py` (`:8780`) is a text-only prompt gateway. It uses a fixed model (`qwen3.8:27b`) and **sends no tools** to the model.
 - It is published through a Cloudflare quick tunnel (`cloudflared`, random `*.trycloudflare.com` URL).
@@ -205,7 +284,10 @@ Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
 - Limits: 2 active jobs and 20 jobs per hour per source, and a 30-minute job timeout.
 - The setup page (`/local/setup`, which shows the API key and pairing code) only answers direct loopback requests.
 
-### Health dashboard
+</details>
+
+<details>
+<summary><b>Health dashboard</b></summary>
 
 - `http://127.0.0.1:8765/status`, the `suite_status` chat action, Telegram `/qstatus` and `local-tools/Test-QwenSuite.ps1` all show the same read-only report from `local-tools/suite_health.py`. It covers:
   - Ports.
@@ -226,7 +308,13 @@ Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
 - **Channel outages** are counted once, at the time the channel actually stopped. The Telegram/WhatsApp line says whether the watchdog reconnected the channel, will do so when the internet is back, or needs a new QR login.
 - `Test-QwenSuite.ps1` exit codes: `0` normal, `1` worth a look, `2` problem, `3` check could not run.
 
-### eGPU / CPU auto-selection
+<p align="center"><a href="../docs/screenshots/health-dashboard-models.png"><img src="../docs/screenshots/health-dashboard-models.png" alt="Health dashboard, lower half: models, display adapters, disk, Telegram and WhatsApp, OpenClaw automations, OAuth and Project sync" width="70%"></a><br>
+<sub>The lower half of <code>/status</code>: models, display adapters, disk, channels, automations, OAuth and Project sync.</sub></p>
+
+</details>
+
+<details>
+<summary><b>eGPU / CPU auto-selection</b></summary>
 
 - `Resolve-OllamaGpu.ps1` runs before every Ollama start:
   - **Usable NVIDIA GPU present** (compute capability ≥ 7.0, ≥ 6 GiB, driver ≥ 550): Ollama gets only that card, by UUID, with the `cuda_v12` library and Vulkan off.
@@ -239,7 +327,10 @@ Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
   - The User environment variable `QWEN_GPU_MODE` (`auto|cpu|all|vulkan`) overrides the automatic choice.
 - **Diagnostics:** `Test-QwenGpu.ps1` (report, `-SelfTest`, `-Bench`, `-EvictionCheck`) and `bench.ps1`, which runs without unloading models.
 
-### Qwen Suite Desktop
+</details>
+
+<details>
+<summary><b>Qwen Suite Desktop</b></summary>
 
 - `QwenSuiteDesktop.exe` (the **Qwen Suite Desktop** shortcut) is one WebView2 window with buttons for chat, Permission Center, compute device, Video Studio and suite status (Ctrl+1 to Ctrl+5, F5 to reload).
 - Only `127.0.0.1:3000` and `127.0.0.1:8765` open inside the app. Other web links open in the default browser, and other schemes (`file:`, `ms-settings:` and so on) are blocked.
@@ -247,65 +338,91 @@ Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
 - It uses its own WebView2 profile (`%LOCALAPPDATA%\QwenSuite\Desktop`), so the first launch asks for the Open WebUI sign-in.
 - `QwenSuiteDesktop.exe --selftest out.txt` tests the URL policy. The app is built and shipped by the installer project; it is not part of this repository.
 
-### Installers
+</details>
+
+<details>
+<summary><b>Installers</b></summary>
 
 - The Online and Offline installers (current release **1.6.2**, 9 November 2026) are built from a separate installer project and distributed separately. They are **not** part of this repository.
   - **Online:** installs the runtimes with winget and downloads the models. An optional *extra models* task adds `qwen3.6:35b`, `gemma4:26b-a4b-it-qat` and `mimo-v2.6:9b`. Each one is skipped, with a warning, if the drive lacks room for it plus a 15 GB reserve, and MiMo is skipped on an Ollama older than 0.40.15.
   - **Offline:** `Qwen-Setup-Offline.exe` plus 35 parts (63.77 GiB) with the Ollama 0.40.15 runtime, the five main models and Qwen Suite Desktop. Installing it over an Offline 1.6.1 install also updates the bundled Ollama runtime: only the suite's own Ollama processes are stopped, the old runtime is kept as `runtime\ollama.old-<version>-<time>`, and it is put back if unpacking fails.
 - The installers run `Configure-Qwen-WebUI.py` and `Configure-OpenClaw.py` from this repository to apply the suite's settings.
 
+</details>
+
+## At a glance
+
+| | |
+|---|---|
+| **Current release** | 1.6.2 (Online and Offline installers, 9 November 2026) |
+| **Platform** | Windows 10 (tested) or 11, 64-bit, Windows PowerShell 5.1 |
+| **Reference machine** | Dell Precision 3551: Intel i7-10750H (6 cores), 64 GB RAM, Quadro P620 4 GB; an RTX eGPU over Thunderbolt 3 is supported |
+| **Main models** | `qwen3.8:27b` (general, vision), `qwen3-coder:30b` (code), `muse-glimmer:30b` (agent, review), `granite4.2:8b` (fast, structured, RAG), `qwen3-embedding:4b` (embeddings) |
+| **Extra models** | `qwen3.6:35b`, `gemma4:26b-a4b-it-qat`, `mimo-v2.6:9b` (optional, picked directly) |
+| **Tools** | 72 MCP tools on `:8765`, reached through two small permission gateways |
+| **Channels** | Open WebUI and Qwen Suite Desktop on this PC; Telegram, WhatsApp and LINE through OpenClaw; a text-only internet gateway |
+| **Network exposure** | Every service binds `127.0.0.1`; only the text-only gateway is published, through a Cloudflare quick tunnel |
+
+## What's new in 1.6.2
+
+Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
+
+- **Project sync into Open WebUI works again.** The tools use the owner's own Open WebUI API key, limited to the folders, memories and files endpoints, and catch up in the background.
+- **Telegram and WhatsApp reconnect by themselves** after a network outage: a new channel watchdog restarts a channel that OpenClaw gave up on, once the internet is back.
+- **Health dashboard:** OpenClaw checks stay reliable when its CLI is slow, outages are reported at the time they happened, and a new card covers Project sync.
+- **Ollama 0.40.15** and three extra models you can pick directly: Qwen3.6 35B-A3B, Gemma 4 26B-A4B and the official MiMo-V2.6 9B.
+- **AI video clips** with the new `generate_ai_video` tool and the optional Wan 2.2 pack.
+- **Qwen Suite Desktop**, one window for chat, permissions, compute device, Video Studio and status.
+- **Installers 1.6.2:** a rebuilt Online installer and a new Offline installer that also updates the bundled Ollama runtime when it installs over Offline 1.6.1.
+
 ## Architecture
 
 ```mermaid
-flowchart LR
-  subgraph Clients
-    B["Browser on this PC"]
-    D["Qwen Suite Desktop<br/>WebView2 window"]
-    TG["Telegram / WhatsApp"]
-    NET["Remote browser / REST client / LINE"]
+flowchart TB
+  subgraph clients["Clients"]
+    PC["Browser or<br/>Qwen Suite Desktop"]
+    CHAT["Telegram<br/>WhatsApp"]
+    WEB["Internet: web client,<br/>REST API, LINE"]
   end
-
-  subgraph PC["Windows PC: every service binds 127.0.0.1"]
-    WUI["Open WebUI :3000"]
-    OC["OpenClaw gateway :18789"]
-    R["Smart Model Router :8770"]
-    RR["Reranker :8771<br/>Qwen3-Reranker-0.6B, CPU"]
-    O["Ollama :11434"]
-    F1["Permission gateway :8766<br/>source = webui"]
-    F2["Permission gateway :8767<br/>source = openclaw"]
-    LT["Local Computer tools :8765<br/>72 MCP tools, Permission Center,<br/>/status /permissions /path-manager<br/>/compute /video-studio"]
-    CW["Channel watchdog<br/>(inside the :8765 process)"]
-    W["Workers: Video Studio, research,<br/>Codex bridge, task monitor"]
-    CU["ComfyUI :8190<br/>Wan 2.2, optional pack"]
-    IG["Internet Prompt Gateway :8780<br/>text only, no tools"]
-    GPU["Resolve-OllamaGpu.ps1<br/>watch-ollama-gpu.ps1"]
+  subgraph pc["Windows PC: every service binds 127.0.0.1"]
+    WUI["Open WebUI<br/>:3000"]
+    OC["OpenClaw gateway<br/>:18789"]
+    IG["Internet Prompt Gateway<br/>:8780, text only, no tools"]
+    F1["Permission gateway<br/>:8766"]
+    F2["Permission gateway<br/>:8767"]
+    LT["Local Computer tools :8765<br/>72 MCP tools, web pages,<br/>channel watchdog"]
+    WK["Workers: Video Studio,<br/>research, Codex bridge"]
+    R["Smart Model Router<br/>:8770"]
+    RR["Reranker<br/>:8771"]
+    O["Ollama<br/>:11434"]
+    CU["ComfyUI, Wan 2.2<br/>:8190, optional"]
   end
-
-  CF["Cloudflare quick tunnel<br/>cloudflared"]
-  EXT["Optional cloud services:<br/>Runway, DuckDuckGo, Edge TTS"]
-
-  B --> WUI
-  D --> WUI
-  D --> LT
+  PC --> WUI
+  CHAT --> OC
+  WEB -->|Cloudflare quick tunnel| IG
+  WUI -->|MCP| F1 --> LT
+  OC -->|MCP| F2 --> LT
+  LT --> WK
   WUI -->|chat| R
-  WUI -->|direct models, embeddings| O
-  WUI -->|rerank| RR
-  WUI -->|MCP| F1
-  TG --> OC
   OC -->|chat| R
-  OC -->|MCP| F2
-  F1 -->|/gateway/dispatch| LT
-  F2 -->|/gateway/dispatch| LT
+  WK --> R
   R --> O
-  LT --> W
-  LT -.->|generate_ai_video| CU
-  CW -.->|channels.start after an outage| OC
-  W --> R
-  W --> O
-  LT -.-> EXT
-  NET -->|HTTPS| CF --> IG --> O
-  GPU -.->|picks CPU or GPU at start| O
+  WUI -.->|direct models,<br/>embeddings| O
+  IG --> O
+  WUI -.->|rerank| RR
+  LT -.->|AI video| CU
+
+  classDef door fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e
+  classDef tool fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  classDef model fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef client fill:#f1f5f9,stroke:#64748b,color:#0f172a
+  class PC,CHAT,WEB client
+  class WUI,OC,IG door
+  class F1,F2,LT,WK tool
+  class R,RR,O,CU model
 ```
+
+Not drawn, to keep the diagram readable: the GPU scripts (`Resolve-OllamaGpu.ps1`, `watch-ollama-gpu.ps1`) that choose CPU or GPU before Ollama starts; the channel watchdog restarting an OpenClaw channel after an outage; workers that also call Ollama directly; Qwen Suite Desktop opening the `:8765` pages; and the optional cloud services (Runway, DuckDuckGo search, Edge TTS).
 
 | Port | Service | Started by |
 |---|---|---|
@@ -319,30 +436,6 @@ flowchart LR
 | 8190 | ComfyUI for Wan 2.2 (optional pack only) | `generate_ai_video`, on first use |
 | 11434 | Ollama | `start-ollama-server.ps1` / `Start-Ollama.ps1` |
 | 18789 | OpenClaw gateway | OpenClaw (`Start-Qwen-All-in-One.ps1` starts it if needed) |
-
-## Screenshots
-
-The local web pages are served by the tools server on `http://127.0.0.1:8765`. The UI text is Thai. Machine-specific values (a GPU UUID and a project name) are blurred. The screenshots were taken with release 1.6.1 (October 2026); 1.6.2 adds the Project sync card to the health dashboard.
-
-**Health dashboard** (`/status`): overall status, open warnings and one card per check (ports, Ollama, GPU path, models, disk, chat channels, automations, OAuth, installer payload).
-
-![Qwen Suite health dashboard](../docs/screenshots/health-dashboard.png)
-
-**Models check:** every model the suite's code and config refer to, which component needs it, and whether Ollama has it installed.
-
-![Health dashboard: models check](../docs/screenshots/health-dashboard-models.png)
-
-**Permission Center** (`/permissions`): `allow` / `ask` / `deny` per capability, separately for Open WebUI and OpenClaw (Telegram/WhatsApp), with one-time approvals and an audit log.
-
-![Permission Center](../docs/screenshots/permission-center.png)
-
-**Compute device** (`/compute`): choose automatic, CPU-only or a specific GPU for Ollama, and see what is loaded right now.
-
-![Compute device selector](../docs/screenshots/compute-center.png)
-
-**Video Studio** (`/video-studio`): one prompt becomes a monitored job (storyboard, scene cards, narration, music, subtitles, MP4, QA) with resumable checkpoints.
-
-![Video Studio](../docs/screenshots/video-studio.png)
 
 ## Requirements
 
@@ -363,7 +456,8 @@ The local web pages are served by the tools server on `http://127.0.0.1:8765`. T
 
 Use the Online or Offline installer (1.6.2). They are distributed separately from this repository. They install the runtimes and, in the offline build, the models. They then apply the configuration with the `Configure-*.py` scripts. After installation, sign in at `http://127.0.0.1:3000` and change the default password (see [Security model](#security-model)).
 
-### Option B: from source (manual)
+<details>
+<summary><b>Option B: from source (manual)</b>: the steps the scripts expect, for a source install</summary>
 
 There is no bootstrap script. The steps below describe what the scripts expect:
 
@@ -402,7 +496,14 @@ There is no bootstrap script. The steps below describe what the scripts expect:
    - `openclaw-tools\Connect-OpenClaw-Channels.ps1` links the chat channels.
    - `Restart-QwenOllama.ps1` restarts only Ollama, through the same launcher, so the GPU choice runs again.
 
+</details>
+
 ## Configuration
+
+Ports, the Permission Center, owner-editable files, state files, environment variables and what git ignores.
+
+<details>
+<summary><b>Configuration details</b>: open for the full list</summary>
 
 - **Ports:** see the [table above](#architecture). All services bind `127.0.0.1`. Open WebUI uses 3000 rather than 8080 because 8080 was taken on the reference machine.
 - **Permission Center:** `http://127.0.0.1:8765/permissions`. Eight categories (project read, computer read, memory write, project write, computer write, run programs, task control, media editing) can each be set to `allow`, `ask` or `deny`, separately for `webui` and `openclaw`. Scoped policies per sender or project are also supported. `ask` creates a one-time approval that expires after 15 minutes. Every decision is written to `audit.jsonl`.
@@ -427,6 +528,8 @@ There is no bootstrap script. The steps below describe what the scripts expect:
   - Workspaces: `openclaw-workspace\`.
   - File types: databases, `.env`, keys, `credentials*`, archives and binaries.
 
+</details>
+
 ## Security model
 
 This is a single-owner setup that deliberately trades confirmations for convenience. Read this section before connecting any chat channel.
@@ -434,6 +537,10 @@ This is a single-owner setup that deliberately trades confirmations for convenie
 - **Loopback only.** Open WebUI, the tool servers, router, reranker, internet gateway, Ollama, ComfyUI and the OpenClaw gateway all bind `127.0.0.1`. Open WebUI accepts browser API calls only from its own origin (`CORS_ALLOW_ORIGIN`). The `:8765` JSON endpoints refuse cross-origin posts, and the status API refuses foreign `Host` headers.
 - **Login.** Open WebUI requires a password and has self-registration disabled. The configuration script creates the owner account **`admin@localhost`** with a default password. **Change it at the first sign-in** (Settings > Account). The default password is not printed here, but anyone with the source can read it, so treat it as public.
 - **Project sync key.** Open WebUI API keys are limited to `/api/v1/folders`, `/api/v1/memories` and `/api/v1/files`. The tools read the owner's key from Open WebUI's database when they need it and never copy it elsewhere. With that limit the key cannot read chats or user accounts or create new keys (checked: HTTP 403).
+
+<details>
+<summary><b>More of the security model</b>: hard blocks, Codex bridge, chat channels, watchdog, desktop app, internet gateway and what leaves the machine</summary>
+
 - **The Permission Center allows everything by default.** For both `webui` and `openclaw`, all eight categories default to **Allow**. As a result, a message from an allowed Telegram/WhatsApp sender can run local commands, write files and start tasks **without a confirmation prompt**. This is the owner's deliberate choice. Set categories to `ask` or `deny` if you want a different trade-off. The protections that still apply under Allow are listed next.
 - **Hard blocks, independent of policy:**
   - **File tools:**
@@ -461,9 +568,14 @@ This is a single-owner setup that deliberately trades confirmations for convenie
   - Tunnel traffic through Cloudflare.
   - Open WebUI telemetry is switched off (`ANONYMIZED_TELEMETRY=False`, `DO_NOT_TRACK`, `SCARF_NO_ANALYTICS`).
 
+</details>
+
 ## Model and component licences
 
-Models and runtimes are **not** distributed in this repository. Each is downloaded separately under its own licence.
+Models and runtimes are **not** distributed in this repository. Each is downloaded separately under its own licence. Watch out for three of them: MMS-TTS Thai and Qwen-Image 2.1 are non-commercial only, and PyMuPDF is AGPL-3.0.
+
+<details>
+<summary><b>Licence table</b>: every model, runtime and service the suite uses</summary>
 
 | Component | Used for | Licence |
 |---|---|---|
@@ -488,6 +600,8 @@ Models and runtimes are **not** distributed in this repository. Each is download
 | Runway API, Edge TTS | Cloud image generation, video narration | Commercial online services under their providers' terms |
 
 Licences were checked on the public model pages in October 2026, and those of the extra models and the Wan 2.2 pack in November 2026. Confirm each one on its model card before any commercial use.
+
+</details>
 
 ## Project status and limitations
 
@@ -542,3 +656,5 @@ The full release history is in [CHANGELOG.md](../CHANGELOG.md):
 ## License
 
 The suite's own code is released under the [MIT License](../LICENSE). The third-party models, runtimes and services listed in [Model and component licences](#model-and-component-licences) keep their own licences.
+
+This is an unofficial project, not affiliated with or endorsed by Alibaba Cloud / Qwen, Google, IBM, Meta, Xiaomi, Ollama, Open WebUI, OpenClaw, OpenAI (Codex), Runway or ComfyUI. Product names belong to their owners.
