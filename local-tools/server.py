@@ -20,7 +20,7 @@ from permission_manager import ACTION_CATEGORIES, PermissionManager
 from project_store import PROJECTS_ROOT, ProjectStore
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse, Response
 from task_monitor import TaskMonitor
 from video_orchestrator import VideoOrchestrator
 import compute_control as COMPUTE
@@ -336,32 +336,60 @@ def _api_error(exc: Exception, status_code: int = 400) -> JSONResponse:
     return JSONResponse({"ok": False, "error": str(exc)}, status_code=status_code)
 
 
+# --- Interface language, Thai or English (10 Nov 2026) ---------------------------------------------
+# The suite pages are written in Thai. ui_i18n.js, the first script of every page, translates the page
+# to English in the browser when data/ui-language.json says "en" (or the address has ?lang=en); with
+# Thai it only adds the ไทย | EN switch. Qwen Suite Desktop reads the same file for its tab names.
+UI_I18N_JS = Path(__file__).with_name("ui_i18n.js")
+UI_LANGUAGE_FILE = Path(__file__).resolve().parent.parent / "data" / "ui-language.json"
+
+
+def _ui_language() -> str:
+    try:
+        value = json.loads(UI_LANGUAGE_FILE.read_text(encoding="utf-8-sig")).get("language")
+    except (OSError, ValueError, AttributeError):
+        return "th"
+    return value if value in ("th", "en") else "th"
+
+
+def _ui_html(page: Path) -> str:
+    """The page with the language script as the first element of <head>."""
+    text = page.read_text(encoding="utf-8")
+    try:
+        version = int(UI_I18N_JS.stat().st_mtime)
+    except OSError:
+        version = 0
+    tag = f'<script src="/ui/i18n.js?v={version}" data-lang="{_ui_language()}"></script>'
+    match = re.search(r"<head[^>]*>", text, re.IGNORECASE)
+    return text[:match.end()] + tag + text[match.end():] if match else tag + text
+
+
 @mcp.custom_route("/path-manager", methods=["GET"], include_in_schema=False)
 async def path_manager_page(request: Request) -> HTMLResponse:
     if not PATH_MANAGER_HTML.exists():
         return HTMLResponse("Project Path Manager UI is missing.", status_code=500)
-    return HTMLResponse(PATH_MANAGER_HTML.read_text(encoding="utf-8"))
+    return HTMLResponse(_ui_html(PATH_MANAGER_HTML))
 
 
 @mcp.custom_route("/permissions", methods=["GET"], include_in_schema=False)
 async def permission_center_page(request: Request) -> HTMLResponse:
     if not PERMISSION_CENTER_HTML.exists():
         return HTMLResponse("Permission Center UI is missing.", status_code=500)
-    return HTMLResponse(PERMISSION_CENTER_HTML.read_text(encoding="utf-8"))
+    return HTMLResponse(_ui_html(PERMISSION_CENTER_HTML))
 
 
 @mcp.custom_route("/compute", methods=["GET"], include_in_schema=False)
 async def compute_center_page(request: Request) -> HTMLResponse:
     if not COMPUTE_CENTER_HTML.exists():
         return HTMLResponse("Compute device UI is missing.", status_code=500)
-    return HTMLResponse(COMPUTE_CENTER_HTML.read_text(encoding="utf-8"))
+    return HTMLResponse(_ui_html(COMPUTE_CENTER_HTML))
 
 
 @mcp.custom_route("/video-studio", methods=["GET"], include_in_schema=False)
 async def video_studio_page(request: Request) -> HTMLResponse:
     if not VIDEO_STUDIO_HTML.exists():
         return HTMLResponse("Qwen Video Studio UI is missing.", status_code=500)
-    return HTMLResponse(VIDEO_STUDIO_HTML.read_text(encoding="utf-8"))
+    return HTMLResponse(_ui_html(VIDEO_STUDIO_HTML))
 
 
 @mcp.custom_route("/video-studio/api/state", methods=["GET"], include_in_schema=False)
@@ -534,7 +562,35 @@ def _mcp_tool_count() -> int:
 async def suite_status_page(request: Request) -> HTMLResponse:
     if not STATUS_HTML.exists():
         return HTMLResponse("Suite status UI is missing.", status_code=500)
-    return HTMLResponse(STATUS_HTML.read_text(encoding="utf-8"))
+    return HTMLResponse(_ui_html(STATUS_HTML))
+
+
+@mcp.custom_route("/ui/i18n.js", methods=["GET"], include_in_schema=False)
+async def ui_i18n_script(request: Request) -> Response:
+    if not UI_I18N_JS.exists():
+        return Response("/* ui_i18n.js is missing */", status_code=404, media_type="text/javascript")
+    return Response(UI_I18N_JS.read_bytes(), media_type="text/javascript; charset=utf-8",
+                    headers={"Cache-Control": "no-cache"})
+
+
+@mcp.custom_route("/ui/api/language", methods=["GET", "POST"], include_in_schema=False)
+async def ui_language_api(request: Request) -> JSONResponse:
+    try:
+        if request.headers.get("host", "").lower() not in _STATUS_HOSTS:
+            raise PermissionError("host not allowed")
+        if request.method == "POST":
+            _require_local_json(request)
+            body = await request.json()
+            language = body.get("language") if isinstance(body, dict) else None
+            if language not in ("th", "en"):
+                raise ValueError("language must be th or en")
+            UI_LANGUAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            temp = UI_LANGUAGE_FILE.with_name(UI_LANGUAGE_FILE.name + ".tmp")
+            temp.write_text(json.dumps({"language": language}) + "\n", encoding="utf-8")
+            os.replace(temp, UI_LANGUAGE_FILE)
+        return JSONResponse({"ok": True, "language": _ui_language()})
+    except Exception as exc:
+        return _api_error(exc, 403 if isinstance(exc, PermissionError) else 400)
 
 
 @mcp.custom_route("/status/api/state", methods=["GET"], include_in_schema=False)
@@ -565,7 +621,7 @@ def _account_page(request: Request, frame_ancestors: str) -> HTMLResponse:
         return HTMLResponse("host not allowed", status_code=403)
     if not ACCOUNT_HTML.exists():
         return HTMLResponse("Account page is missing.", status_code=500)
-    return HTMLResponse(ACCOUNT_HTML.read_text(encoding="utf-8"), headers={
+    return HTMLResponse(_ui_html(ACCOUNT_HTML), headers={
         "Cache-Control": "no-store",
         "Referrer-Policy": "no-referrer",
         "Content-Security-Policy": f"frame-ancestors {frame_ancestors}",

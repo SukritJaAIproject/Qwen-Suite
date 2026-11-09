@@ -3,6 +3,8 @@
 //    "สมัครบัญชีใหม่" (switches Open WebUI's own form to sign-up; shown only when sign-up is on).
 //  * The suite's floating buttons (Permissions, Video Studio, Projects & Tasks) are hidden on the
 //    sign-in page and for accounts that are not admin; the tools behind them are owner-only.
+//  * 10 Nov 2026: the labels and the panel follow Open WebUI's own language (<html lang>):
+//    Thai when Open WebUI is in Thai, English otherwise.
 (() => {
   if (window.__qwenAccountLoaded) return;
   window.__qwenAccountLoaded = true;
@@ -11,6 +13,15 @@
   const SIGNUP_TEXT = /^\s*(sign\s*up|register|create\s+(an\s+)?account|สมัคร\S*|ลงทะเบียน\S*)\s*$/i;
   const SIGNIN_TEXT = /^\s*(sign\s*in|log\s*in|เข้าสู่ระบบ|ลงชื่อเข้าใช้\S*)\s*$/i;
   const root = document.documentElement;
+  const thai = () => /^th\b/i.test(root.lang || '');
+  const TEXT = {
+    forgot: ['ลืมรหัสผ่าน?', 'Forgot password?'],
+    signup: ['สมัครบัญชีใหม่', 'New account'],
+    note: ['บัญชีใหม่ต้องรอเจ้าของเครื่องอนุมัติก่อนใช้งาน', 'A new account can be used once the owner approves it'],
+    panel: ['ลืมรหัสผ่าน', 'Forgot password'],
+    close: ['ปิด', 'Close'],
+  };
+  const t = key => TEXT[key][thai() ? 0 : 1];
   root.classList.add('qwen-hide-suite');   // shown again once Open WebUI says this is an admin
 
   const style = document.createElement('style');
@@ -36,10 +47,10 @@
   // ---------------------------------------------------------------- forgot-password panel
   const overlay = document.createElement('div');
   overlay.id = 'qwen-account-overlay';
-  overlay.innerHTML = '<section id="qwen-account-panel" role="dialog" aria-modal="true" aria-label="ลืมรหัสผ่าน">' +
-    '<button id="qwen-account-close" type="button" title="ปิด">×</button><iframe title="ลืมรหัสผ่าน"></iframe></section>';
+  overlay.innerHTML = '<section id="qwen-account-panel" role="dialog" aria-modal="true">' +
+    '<button id="qwen-account-close" type="button">×</button><iframe></iframe></section>';
   const openForgot = () => {
-    overlay.querySelector('iframe').src = FORGOT_URL;   // fresh page every time
+    overlay.querySelector('iframe').src = FORGOT_URL + '?lang=' + (thai() ? 'th' : 'en');   // fresh page every time
     overlay.classList.add('open');
   };
   const closeForgot = () => { overlay.classList.remove('open'); overlay.querySelector('iframe').src = 'about:blank'; };
@@ -68,9 +79,9 @@
   const buildLinks = () => {
     const box = document.createElement('div');
     box.id = 'qwen-account-links';
-    box.innerHTML = `<button type="button" class="qa-forgot">${ICON_KEY}<span>ลืมรหัสผ่าน?</span></button>` +
-      `<button type="button" class="qa-signup">${ICON_ADD}<span>สมัครบัญชีใหม่</span></button>` +
-      '<div id="qwen-account-note">บัญชีใหม่ต้องรอเจ้าของเครื่องอนุมัติก่อนใช้งาน</div>';
+    box.innerHTML = `<button type="button" class="qa-forgot">${ICON_KEY}<span data-t="forgot"></span></button>` +
+      `<button type="button" class="qa-signup">${ICON_ADD}<span data-t="signup"></span></button>` +
+      '<div id="qwen-account-note" data-t="note"></div>';
     box.querySelector('.qa-forgot').addEventListener('click', openForgot);
     box.querySelector('.qa-signup').addEventListener('click', () => {
       const form = authForm();
@@ -78,6 +89,12 @@
       if (toggle) toggle.click();
     });
     return box;
+  };
+  const relabel = () => {
+    overlay.querySelector('#qwen-account-panel').setAttribute('aria-label', t('panel'));
+    overlay.querySelector('iframe').title = t('panel');
+    overlay.querySelector('#qwen-account-close').title = t('close');
+    if (links) links.querySelectorAll('[data-t]').forEach(el => { el.textContent = t(el.dataset.t); });
   };
   const refreshAuth = () => {
     const form = authForm();
@@ -87,7 +104,7 @@
     }
     const { signup, signin } = nativeToggle(form);
     const signupMode = !signup && !!signin;     // Open WebUI shows "Sign in" while its sign-up form is open
-    if (!links) links = buildLinks();
+    if (!links) { links = buildLinks(); relabel(); }
     if (form.nextElementSibling !== links) form.after(links);
     links.style.display = signupMode ? 'none' : '';
     links.querySelector('.qa-signup').style.display = signup ? '' : 'none';
@@ -124,6 +141,8 @@
     });
   };
   new MutationObserver(tick).observe(document.body, { childList: true, subtree: true });
+  new MutationObserver(relabel).observe(root, { attributes: true, attributeFilter: ['lang'] });
+  relabel();
   window.addEventListener('popstate', tick);
   window.addEventListener('storage', e => { if (e.key === 'token') { checkedFor = null; tick(); } });
   setInterval(() => { checkedFor = null; tick(); }, 60000);

@@ -3,6 +3,8 @@
   window.__qwenProjectPathsLoaded = true;
 
   const MANAGER_URL = 'http://127.0.0.1:8765/path-manager';
+  // These titles follow Open WebUI's own language (<html lang>); the panel shows the suite page in the suite's language.
+  const thai = () => /^th\b/i.test(document.documentElement.lang || '');
   const style = document.createElement('style');
   style.textContent = `
     #qwen-project-paths-button {
@@ -49,7 +51,6 @@
   const button = document.createElement('button');
   button.id = 'qwen-project-paths-button';
   button.type = 'button';
-  button.title = 'จัดการ Path และติดตาม Task แยกตาม Project';
   button.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3.5 6.5h6l2 2h9v9.7a1.8 1.8 0 0 1-1.8 1.8H5.3a1.8 1.8 0 0 1-1.8-1.8V6.5Z"/><path d="M8.7 14h6.6M12 10.7v6.6"/></svg><span>Projects & Tasks</span>`;
 
   const overlay = document.createElement('div');
@@ -59,8 +60,8 @@
       <header id="qwen-project-paths-bar">
         <span>Qwen · Project Control Center</span>
         <div id="qwen-project-paths-actions">
-          <a href="${MANAGER_URL}" target="_blank" title="เปิดเป็นหน้าต่างใหม่">↗</a>
-          <button type="button" data-close title="ปิด">×</button>
+          <a href="${MANAGER_URL}" target="_blank" data-open-new>↗</a>
+          <button type="button" data-close>×</button>
         </div>
       </header>
       <iframe id="qwen-project-paths-frame" title="Project Path Manager" loading="lazy"></iframe>
@@ -76,5 +77,13 @@
   overlay.querySelector('[data-close]').addEventListener('click', close);
   overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
   window.addEventListener('keydown', event => { if (event.key === 'Escape') close(); });
+  const relabel = () => {
+    const th = thai();
+    button.title = th ? 'จัดการ Path และติดตาม Task แยกตาม Project' : 'Manage paths and follow tasks per Project';
+    overlay.querySelector('[data-open-new]').title = th ? 'เปิดเป็นหน้าต่างใหม่' : 'Open in a new window';
+    overlay.querySelector('[data-close]').title = th ? 'ปิด' : 'Close';
+  };
+  relabel();
+  new MutationObserver(relabel).observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] });
   document.body.append(button, overlay);
 })();

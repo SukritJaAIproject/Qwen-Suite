@@ -263,6 +263,12 @@ html.dark button[aria-label="ตอบต่อ"]::after {
   white-space: nowrap;
 }
 
+/* 10 Nov 2026: the label follows Open WebUI's own language (<html lang>) - English unless it is Thai. */
+html.dark:not([lang^="th"]) button[aria-label="Continue Response"]::after,
+html.dark:not([lang^="th"]) button[aria-label="ตอบต่อ"]::after {
+  content: "Continue";
+}
+
 html.dark button[aria-label="Continue Response"]:hover,
 html.dark button[aria-label="ตอบต่อ"]:hover {
   color: #fff !important;

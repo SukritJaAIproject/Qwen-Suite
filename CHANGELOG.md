@@ -2,6 +2,25 @@
 
 All notable changes to Qwen Suite, newest first. Dates are Bangkok time (UTC+7). Versions follow the installer releases. The owner's day-by-day notes, with more machine-specific detail, are in the Thai operations manual [README.md](README.md); the project overview is the [GitHub front page](.github/README.md).
 
+## [Unreleased] - 2026-11-10
+
+### Added
+- **Thai or English interface.** The suite pages (status, Permission Center, compute device, Video Studio, Projects & Tasks, forgot password) are still written in Thai; `local-tools/ui_i18n.js` translates a page to English in the browser when English is chosen.
+  - A "ไทย | EN" switch at the bottom left of every page saves the choice for all pages (`GET`/`POST /ui/api/language`, JSON from this server's own pages only), stored in `data/ui-language.json`; Thai when the file is missing. `?lang=en` or `?lang=th` in the address overrides it for that page only.
+  - `local-tools/server.py` puts `<script src="/ui/i18n.js" data-lang="th|en">` first in every page's `<head>`. With Thai the page's text stays exactly as before; the script only adds the switch.
+  - English translates text, placeholders, titles, aria-labels, `alert`/`confirm` texts and the Thai messages that come from the server (health checks, errors). Text that people typed (inputs, video titles, path descriptions) is never changed. About 630 phrases and 30 patterns, generated from translation tables.
+- **Qwen Suite Desktop in Thai or English.** Tab names, buttons and the "not ready" page follow the same setting, and the page switch changes the tabs at once (`lang:en`/`lang:th` message). The self-test also checks the tab names.
+
+### Changed
+- The Open WebUI add-ons follow Open WebUI's own language (`<html lang>`): the forgot-password and sign-up buttons (`theme/qwen-account.js`), the button titles of Projects & Tasks and Video Studio, and the "Continue" label of the Continue Response button (`theme/qwen-modern-dark.css`) are in Thai when Open WebUI is in Thai and in English otherwise. The forgot-password panel opens in the sign-in page's language; the Projects & Tasks, Video Studio and Permissions panels follow the suite's switch.
+- `start-webui.ps1` loads the add-ons as v3 (Projects & Tasks), v4 (Permissions), v5 (Video Studio) and v2 (account), and now replaces the `?v=` of every add-on on each start, so a browser never keeps an old copy.
+- The GitHub front page screenshots were taken again with the interface in English.
+- Tested before going live: every page with the live API answers in a browser (Thai unchanged; in English no Thai left apart from what people typed), the alert/confirm texts and the switch, the new server routes, the add-ons in both languages, and a desktop app build with its self-test. Backups: `backups\pre-i18n-20261110-004648` and the smaller `pre-i18n-js`, `pre-i18n-css` and `pre-i18n-update2` folders.
+- The 1.6.2 (r5) installers do not include this yet; their payload folder is up to date for the next build.
+
+### Fixed
+- The 13 outbound OpenClaw messages that had failed for good (queue `outbound-prepared-v1`, oldest from 16 September 2026) were removed after stopping the gateway and backing up its state database. The health dashboard no longer counts them.
+
 ## [1.6.2] - 2026-11-09 (rebuild r5)
 
 ### Added

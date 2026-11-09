@@ -78,7 +78,7 @@ Qwen Suite is a local, single-user AI workstation for Windows. It connects Ollam
   </tr>
 </table>
 
-<sub>From the reference machine on 9 November 2026 (release 1.6.2). The interface is in Thai, and the chat is a sample conversation. Click a screenshot to open the full page. Some project names and paths, and a GPU ID, are blurred.</sub>
+<sub>From the reference machine on 10 November 2026 (release 1.6.2), with the interface switched to English. Thai is the default; the ไทย | EN switch at the bottom left of every page changes it. The chat is a sample conversation, and video titles are the owner's own (some are in Thai). Click a screenshot to open the full page. Some project names and paths, and a GPU ID, are blurred.</sub>
 
 ## Features
 
@@ -97,6 +97,7 @@ Qwen Suite is a local, single-user AI workstation for Windows. It connects Ollam
 | 🩺 | **Health dashboard** | One read-only report: ports, Ollama, GPU, models, disk, channels, automations, sync, installers |
 | ⚡ | **eGPU and CPU** | The right GPU at every Ollama start, with manual and per-model overrides |
 | 🖥️ | **Desktop app** | Qwen Suite Desktop: one window for chat and the local pages |
+| 🔤 | **Thai or English** | Every suite page and Qwen Suite Desktop in Thai or English with one switch; the add-ons in Open WebUI follow Open WebUI's own language |
 | 📦 | **Installers** | Online and Offline 1.6.2, built by a separate project |
 
 ### Feature details
@@ -366,7 +367,8 @@ Two buttons sit under the Open WebUI sign-in form: "ลืมรหัสผ่�
 - Only `127.0.0.1:3000` and `127.0.0.1:8765` open inside the app. Other web links open in the default browser, and other schemes (`file:`, `ms-settings:` and so on) are blocked.
 - If the suite is not running, the window offers to start Qwen All-in-One.
 - It uses its own WebView2 profile (`%LOCALAPPDATA%\QwenSuite\Desktop`), so the first launch asks for the Open WebUI sign-in.
-- `QwenSuiteDesktop.exe --selftest out.txt` tests the URL policy. The app is built and shipped by the installer project; it is not part of this repository.
+- Tab names, buttons and the "not ready" page are in Thai or English, following the suite's ไทย | EN switch; pressing the switch on a page changes the tabs at once.
+- `QwenSuiteDesktop.exe --selftest out.txt` tests the URL policy and the Thai and English tab names. The app is built and shipped by the installer project; it is not part of this repository.
 
 </details>
 
@@ -397,6 +399,7 @@ Two buttons sit under the Open WebUI sign-in form: "ลืมรหัสผ่�
 
 Released 8–9 November 2026. Full details: [CHANGELOG.md](../CHANGELOG.md).
 
+- **Thai or English interface** (10 November 2026, in the live suite; the next installer build will include it): a ไทย | EN switch on every suite page and in Qwen Suite Desktop. The pages are still written in Thai, and `local-tools/ui_i18n.js` translates them, including the server's messages, in the browser. Thai is the default.
 - **Account help on the sign-in page** (rebuild r5): a forgot-password link by e-mail for the owner, and sign-up with the owner's approval.
 - **Project sync into Open WebUI works again.** The tools use the owner's own Open WebUI API key, limited to the folders, memories and files endpoints, and catch up in the background.
 - **Telegram and WhatsApp reconnect by themselves** after a network outage: a new channel watchdog restarts a channel that OpenClaw gave up on, once the internet is back.
@@ -641,7 +644,7 @@ Licences were checked on the public model pages in October 2026, and those of th
 
 - **Personal, single-machine project.** It is tuned for one laptop: hard-coded paths (`E:\localllm`, `E:\qwen-projects`, `C:\Users\<user>\...`), Anaconda locations and VS Code paths. Moving it means editing those paths.
 - **Windows only.**
-- **Thai-first:** the web pages and most prompts and messages are in Thai.
+- **Thai-first:** the web pages are written in Thai and translated to English in the browser when English is chosen (text that people typed, such as video titles, stays as it is). Most prompts and model messages are in Thai.
 - **CPU-only performance is slow:**
   - `qwen3.8:27b` reads prompts at about 5-6 tokens/s and writes at about 1.4-1.9 tokens/s on the reference CPU.
   - A cold OpenClaw prompt (about 20k tokens) takes 13-23 minutes to read.
@@ -682,6 +685,7 @@ LICENSE                 MIT License for the suite's own code
 
 The full release history is in [CHANGELOG.md](../CHANGELOG.md):
 
+- **Unreleased** (10 November 2026): Thai or English interface for the suite pages and Qwen Suite Desktop; screenshots in English.
 - **1.6.2** (8–9 November 2026): Project sync fix, channel watchdog, account help (forgot password, sign-up with approval), Ollama 0.40.15, extra models, AI video clips, Qwen Suite Desktop, Online and Offline installers.
 - **1.6.1** (1–7 October 2026): Open WebUI sign-in, the `admin@localhost` owner account, the models check on the health dashboard.
 - **1.6** (1 October 2026): Muse Glimmer and Granite take over the agent, review, fast and structured roles; optional local Qwen-Image.

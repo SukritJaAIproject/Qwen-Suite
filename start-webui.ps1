@@ -94,11 +94,16 @@ try {
         if (-not $Index.Contains('/static/custom.css')) {
             $Index = $Index.Replace('</head>', '<link rel="stylesheet" href="/static/custom.css?v=qwen-suite-v1"></head>')
         }
-        if (-not $Index.Contains('/static/qwen-project-paths.js')) {
-            $Index = $Index.Replace('</body>', '<script src="/static/qwen-project-paths.js?v=qwen-suite-v1" defer></script></body>')
+        # 10 Nov 2026: the add-ons' labels follow Open WebUI's language (Thai or English); new ?v= so browsers reload them.
+        if ($Index -match '/static/qwen-project-paths\.js\?v=[^"'']+') {
+            $Index = [regex]::Replace($Index, '/static/qwen-project-paths\.js\?v=[^"'']+', '/static/qwen-project-paths.js?v=qwen-suite-v3')
+        } elseif (-not $Index.Contains('/static/qwen-project-paths.js')) {
+            $Index = $Index.Replace('</body>', '<script src="/static/qwen-project-paths.js?v=qwen-suite-v3" defer></script></body>')
         }
-        if (-not $Index.Contains('/static/qwen-permission-center.js')) {
-            $Index = $Index.Replace('</body>', '<script src="/static/qwen-permission-center.js?v=qwen-suite-v2" defer></script></body>')
+        if ($Index -match '/static/qwen-permission-center\.js\?v=[^"'']+') {
+            $Index = [regex]::Replace($Index, '/static/qwen-permission-center\.js\?v=[^"'']+', '/static/qwen-permission-center.js?v=qwen-suite-v4')
+        } elseif (-not $Index.Contains('/static/qwen-permission-center.js')) {
+            $Index = $Index.Replace('</body>', '<script src="/static/qwen-permission-center.js?v=qwen-suite-v4" defer></script></body>')
         }
         if ($Index -match '/static/qwen-auto-continue\.js\?v=[^"'']+') {
             $Index = [regex]::Replace($Index, '/static/qwen-auto-continue\.js\?v=[^"'']+', '/static/qwen-auto-continue.js?v=qwen-suite-v3')
@@ -106,15 +111,15 @@ try {
             $Index = $Index.Replace('</body>', '<script src="/static/qwen-auto-continue.js?v=qwen-suite-v3" defer></script></body>')
         }
         if ($Index -match '/static/qwen-video-studio\.js\?v=[^"'']+') {
-            $Index = [regex]::Replace($Index, '/static/qwen-video-studio\.js\?v=[^"'']+', '/static/qwen-video-studio.js?v=qwen-suite-v3')
+            $Index = [regex]::Replace($Index, '/static/qwen-video-studio\.js\?v=[^"'']+', '/static/qwen-video-studio.js?v=qwen-suite-v5')
         } elseif (-not $Index.Contains('/static/qwen-video-studio.js')) {
-            $Index = $Index.Replace('</body>', '<script src="/static/qwen-video-studio.js?v=qwen-suite-v3" defer></script></body>')
+            $Index = $Index.Replace('</body>', '<script src="/static/qwen-video-studio.js?v=qwen-suite-v5" defer></script></body>')
         }
         # Sign-in page: "forgot password" and "register" buttons; suite buttons only for admins.
         if ($Index -match '/static/qwen-account\.js\?v=[^"'']+') {
-            $Index = [regex]::Replace($Index, '/static/qwen-account\.js\?v=[^"'']+', '/static/qwen-account.js?v=qwen-suite-v1')
+            $Index = [regex]::Replace($Index, '/static/qwen-account\.js\?v=[^"'']+', '/static/qwen-account.js?v=qwen-suite-v2')
         } elseif (-not $Index.Contains('/static/qwen-account.js')) {
-            $Index = $Index.Replace('</body>', '<script src="/static/qwen-account.js?v=qwen-suite-v1" defer></script></body>')
+            $Index = $Index.Replace('</body>', '<script src="/static/qwen-account.js?v=qwen-suite-v2" defer></script></body>')
         }
         [IO.File]::WriteAllText($IndexPath, $Index, [Text.UTF8Encoding]::new($false))
     }
