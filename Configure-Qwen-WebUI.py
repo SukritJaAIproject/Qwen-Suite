@@ -32,13 +32,15 @@ MODEL_PROFILES = [
     # "extra models" task is ticked and the disk has room; a preset whose model is missing stays hidden.
     ("qwen3.6:35b", "Qwen3.6 35B-A3B", "Qwen3.6 35B MoE (3B active): quick general model with vision and tools; fast on CPU."),
     ("gemma4:26b-a4b-it-qat", "Gemma 4 26B-A4B", "Google Gemma 4 26B MoE (4B active, QAT 4-bit): multilingual chat, vision, and tools."),
-    ("hf.co/bartowski/MiMo-V2.6-Distill-Qwen-9B-GGUF:Q4_K_M", "MiMo-V2.6 9B",
-     "Xiaomi MiMo-V2.6 Distill 9B (Qwen3.5 base): small coding and agent model with vision and tools."),
+    # The official Ollama build (needs Ollama 0.40.15 or newer); until 9 Nov 2026 this was the Hugging Face
+    # GGUF hf.co/bartowski/MiMo-V2.6-Distill-Qwen-9B-GGUF:Q4_K_M, whose preset is no longer touched here.
+    ("mimo-v2.6:9b", "MiMo-V2.6 9B",
+     "Xiaomi MiMo-V2.6 9B (official Ollama build): small coding and agent model with vision and tools."),
 ]
 # Presets that accept images (the model reports the 'vision' capability in Ollama /api/show).
 VISION_PROFILES = {
     "qwen-auto:latest", "qwen-general:latest", "qwen3.8:27b",
-    "qwen3.6:35b", "gemma4:26b-a4b-it-qat", "hf.co/bartowski/MiMo-V2.6-Distill-Qwen-9B-GGUF:Q4_K_M",
+    "qwen3.6:35b", "gemma4:26b-a4b-it-qat", "mimo-v2.6:9b",
 }
 # Preset rows made by hand in Workspace > Models; they get the builtinTools trim only.
 EXTRA_PRESET_IDS = ("qwen3.8-local:27b",)
@@ -342,6 +344,61 @@ def set_config(connection: sqlite3.Connection, key: str, value: object, now: int
     )
 
 
+# Project sync (local-tools/project_store.py) signs in to Open WebUI with the owner's API key, which
+# it reads from this database. Open WebUI 0.11 ships with API keys turned off; they are turned on
+# limited to the endpoints Project sync uses. Added 2026-11-09 (1.6.2): from 1.6.1, when login became
+# required, project_store's old fixed sign-in failed and projects stopped reaching Open WebUI.
+PROJECT_SYNC_ENDPOINTS = ("/api/v1/folders", "/api/v1/memories", "/api/v1/files")
+
+
+def _config_value(connection: sqlite3.Connection, key: str) -> object:
+    row = connection.execute("SELECT value FROM config WHERE key=?", (key,)).fetchone()
+    if not row:
+        return None
+    try:
+        return json.loads(row[0])
+    except (TypeError, ValueError):
+        return row[0]
+
+
+def ensure_project_sync_api_key(connection: sqlite3.Connection, owner_id: str, now: int) -> str:
+    """Let Project sync sign in: API keys on (limited to its endpoints) and a key for the owner.
+
+    - API keys off (the Open WebUI default): turned on with endpoint restrictions that allow only
+      the folder, memory and file endpoints (Admin Settings > General shows the switches and list).
+    - API keys already on with restrictions: the three endpoints are added to the list if missing.
+    - API keys already on without restrictions: left as they are.
+    - An existing owner key is kept: Open WebUI keeps one key per user, so a new key would replace
+      one the owner may be using elsewhere.
+    Returns what changed, never the key.
+    """
+    if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='api_key'").fetchone():
+        return "skipped: this Open WebUI has no api_key table"
+    changes = []
+    if _config_value(connection, "auth.enable_api_keys") is not True:
+        set_config(connection, "auth.enable_api_keys", True, now)
+        set_config(connection, "auth.api_key.endpoint_restrictions", True, now)
+        set_config(connection, "auth.api_key.allowed_endpoints", ",".join(PROJECT_SYNC_ENDPOINTS), now)
+        changes.append("turned on API keys, limited to " + ", ".join(PROJECT_SYNC_ENDPOINTS))
+    elif _config_value(connection, "auth.api_key.endpoint_restrictions") is True:
+        listed = str(_config_value(connection, "auth.api_key.allowed_endpoints") or "")
+        allowed = [path.strip() for path in listed.split(",") if path.strip()]
+        missing = [path for path in PROJECT_SYNC_ENDPOINTS if path not in allowed]
+        if missing:
+            set_config(connection, "auth.api_key.allowed_endpoints", ",".join(allowed + missing), now)
+            changes.append("added " + ", ".join(missing) + " to the API key endpoint list")
+    if not connection.execute("SELECT 1 FROM api_key WHERE user_id=?", (owner_id,)).fetchone():
+        connection.execute(
+            """
+            INSERT INTO api_key (id,user_id,key,data,expires_at,last_used_at,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?)
+            """,
+            (f"key_{owner_id}", owner_id, "sk-" + uuid.uuid4().hex, None, None, None, now, now),
+        )
+        changes.append("created the owner's API key")
+    return "; ".join(changes) or "unchanged"
+
+
 def provision_default_admin(connection: sqlite3.Connection, now: int) -> tuple[str, bool]:
     """Create or migrate the local owner once, without resetting later password changes."""
     marker = connection.execute(
@@ -450,6 +507,7 @@ def configure(db_path: Path) -> dict[str, object]:
         now = int(time.time())
         owner_id, admin_provisioned = provision_default_admin(connection, now)
         admin_email = migrate_default_admin_email(connection, owner_id, now)
+        project_sync = ensure_project_sync_api_key(connection, owner_id, now)
 
         params = {
             "system": SYSTEM_PROMPT,
@@ -664,6 +722,7 @@ def configure(db_path: Path) -> dict[str, object]:
             "owner_id": owner_id,
             "default_admin_provisioned": admin_provisioned,
             "default_admin_email": admin_email,
+            "project_sync": project_sync,
             "profiles": [item[0] for item in MODEL_PROFILES],
             "embedding": "qwen3-embedding:4b",
             "reranker": "Qwen/Qwen3-Reranker-0.6B",

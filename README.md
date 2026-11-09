@@ -1,5 +1,62 @@
 # Local LLM บนเครื่อง Dell Precision 3551
 
+## อัปเดต 9 พ.ย. 2026 (Qwen Suite 1.6.2 — แก้ Project sync, อัปเกรด Ollama, MiMo รุ่น official, หน้าสถานะ OpenClaw, WhatsApp ต่อใหม่เอง, ตัวติดตั้ง Offline)
+
+- **Project sync เข้า Open WebUI กลับมาใช้ได้** (เสียตั้งแต่ 1.6.1 ที่หน้าเว็บเริ่มต้องล็อกอิน):
+  - `local-tools\project_store.py` ล็อกอินด้วย **API key ของบัญชีเจ้าของเครื่อง** ที่อ่านจาก `webui-data\webui.db` ทุกครั้งที่ต้องใช้
+    (ไม่ได้คัดลอก key ไปเก็บที่อื่น ถ้าสร้าง key ใหม่ที่ Settings › Account › API Keys ระบบก็ใช้ key ใหม่เอง)
+  - Open WebUI เปิด API keys แบบ **จำกัด endpoint** ไว้แค่ `/api/v1/folders`, `/api/v1/memories`, `/api/v1/files` (Admin Settings › General)
+    — key นี้อ่านแชต รายชื่อผู้ใช้ หรือสร้าง key ใหม่ไม่ได้ (ทดสอบแล้วได้ 403) ถ้าจะใช้ API key ทำอย่างอื่นให้เพิ่ม endpoint ที่หน้านั้น
+  - ตั้งค่าด้วย `Configure-Qwen-WebUI.py` ฟังก์ชัน `ensure_project_sync_api_key` (key เดิมที่มีอยู่จะไม่ถูกแทน · รายการ endpoint เดิมจะถูกเติม ไม่ถูกลบ)
+  - ล็อกอินแบบเก่า `admin@localhost` / `admin` เหลือเฉพาะ Open WebUI ที่ปิดล็อกอิน (`/api/config` บอก `auth=false`)
+    จึงไม่นับเป็นการล็อกอินผิดของบัญชีเจ้าของ (Open WebUI ล็อกอีเมลหลังผิด 15 ครั้งใน 3 นาที)
+  - `server.py` ตามเก็บงานค้างเอง: เมื่อ Open WebUI ตอบแล้ว และทุก 10 นาทีถ้ามีของค้าง — โฟลเดอร์ที่ค่าตั้งเปลี่ยนตอน sync ไม่ได้,
+    ความจำที่ยังไม่มี id (ถ้า Open WebUI มีข้อความเดียวกันอยู่แล้วจะผูกกับอันเดิม ไม่สร้างซ้ำ) และไฟล์แนบที่ยังไม่ขึ้น · ผลอยู่ที่ `data\project-sync.json`
+  - หน้า `/status` มีหัวข้อใหม่ "Project sync เข้า Open WebUI" · ทดสอบกับสำเนาฐานข้อมูลบน Open WebUI ชุดทดลอง (พอร์ต 3001) ผ่าน 19/19 ก่อนใช้จริง
+  - เครื่องนี้: ส่งค่าตั้งโฟลเดอร์ของ B781001, General, OCPP ใหม่ และความจำที่ค้าง 1 รายการของ General ขึ้นแล้ว (ตรวจตรงกันครบ)
+  - สำรอง: `webui-data\backups\webui-before-project-sync-20261109-005703.db` · ไฟล์เดิมและ `project.json` ทุก Project ที่ `backups\pre-project-sync-20261109-005658`
+- **อัปเกรด Ollama 0.32.15 → 0.40.15** ด้วย `OllamaSetup.exe` จาก GitHub release (ขนาดและ SHA-256 ตรงกับ digest ของ release)
+  - ทดสอบใน sandbox ก่อน (พอร์ต 11435, ใช้ `E:\ollama-models` ร่วมแบบ `OLLAMA_NOPRUNE=1`): ทุกโมเดลตอบได้,
+    embedding ของ `qwen3-embedding:4b` ตรงกับ 0.32.15 (cosine 0.9991–0.9993 จึงไม่ต้องสร้างดัชนี RAG ใหม่), ไฟล์โมเดลเดิมไม่ถูกแก้หรือลบ
+    (0.40.15 เพิ่มโฟลเดอร์ `manifests-v2` และ `metadata` ใน `E:\ollama-models` — 0.32.15 ไม่ใช้สองโฟลเดอร์นี้ ย้อนกลับได้)
+  - ยังใช้วิธีเดิม: เซิร์ฟเวอร์เริ่มผ่าน `start-ollama-server.ps1` / `Restart-QwenOllama.ps1` · แอป tray ที่ตัวติดตั้งเปิดขึ้นถูกปิดทันที (ตรวจแล้วตัวติดตั้งไม่ได้เพิ่มรายการเริ่มอัตโนมัติใหม่ ทั้ง Startup, Run และ Task Scheduler)
+    — **ยังห้ามเปิดแอป tray ของ Ollama** เหมือนเดิม (ดูหัวข้อ tray ด้านล่าง)
+  - 0.40.15 ยังเห็น Quadro P620 ผ่าน CUDA v12 (CUDA v13 ไม่รองรับ CC 6.1) และไม่ใช้ Intel UHD ผ่าน Vulkan เว้นแต่ตั้ง `OLLAMA_IGPU_ENABLE=1`
+  - สำรองโปรแกรมเดิม: `G:\qwen-backups\ollama-0.32.15-20261109-010323` (ย้อนกลับ: `E:\claude-work\qwen-suite-20261108\b\B-Rollback.cmd`)
+  - `OllamaSetup.exe` ที่ค้างใน `%LOCALAPPDATA%\Ollama\updates_v2` (1.57 GB) **ลบแล้ว** ตามที่เจ้าของเครื่องอนุมัติ (9 พ.ย.) — ลบหลังตรวจว่ามีสำเนาที่ SHA-256 ตรงกันอยู่ใน G: แล้วเท่านั้น
+- **MiMo-V2.6 9B ใช้รุ่น official `mimo-v2.6:9b`** แทน GGUF จาก Hugging Face (6.55 GB, MIT, completion / vision / tools / thinking, renderer `mimo-v2.6`)
+  - ผลทดสอบบนเครื่องนี้: ตอบไทย "7 คูณ 6" = "42" ผ่าน (22.9 วินาทีรวมโหลด), tool call `get_weather({"city": "Bangkok"})` ผ่าน, อ่านภาพวงกลมแดง "Red" ผ่าน · ใน sandbox โหลดครั้งแรก 62.9 วินาที
+  - preset "MiMo-V2.6 9B" ใน Open WebUI ชี้ไปตัว official แล้ว · preset ของ GGUF เดิม**ลบแล้ว** (9 พ.ย. 10:19 ตามที่เจ้าของเครื่องอนุมัติ · สำรองฐานข้อมูลไว้ที่ `webui-data\backups\webui-before-mimo-gguf-preset-delete-20261109-101948.db`)
+  - ไฟล์ GGUF เดิม (`hf.co/bartowski/MiMo-V2.6-Distill-Qwen-9B-GGUF:Q4_K_M`, 6.76 GB) **ลบแล้ว** ตามที่เจ้าของเครื่องอนุมัติ (9 พ.ย. 08:50 ผ่าน Ollama API — blob ที่ตัวติดตั้ง Offline ใช้ยังอยู่ครบ 19 ไฟล์) · preset เดิมที่ซ่อนไว้ใน Open WebUI ลบแล้วเช่นกัน (10:19)
+- **ตัวติดตั้ง Qwen Suite 1.6.2 Online สร้างใหม่** (Project sync + MiMo official; MiMo ต้องใช้ Ollama 0.40.15+ ถ้าเครื่องปลายทางมี Ollama เก่า
+  ตัวติดตั้งข้าม MiMo พร้อมบอกวิธีอัปเดต) · ไฟล์ชุด 8 พ.ย. เก็บไว้ข้างกันเป็น `*.previous-<เวลา>`
+- **หน้าสถานะอ่านค่า Telegram/WhatsApp และงานตั้งเวลาของ OpenClaw ได้แม้ OpenClaw ตอบช้า** (`/status`, `/qstatus`, `suite_status`, `Test-QwenSuite.ps1`)
+  - เดิม `openclaw gateway call health` และ `openclaw automations list` ถูกตัดที่ 10 วินาที แต่ CLI ของ OpenClaw ใช้ราว 3 วินาทีตอนพร้อม
+    6 วินาทีขึ้นไปตอนเพิ่งเปิด และเกิน 10 วินาทีเมื่อทำพร้อมหัวข้ออื่น หัวข้อนี้จึงขึ้น "ตรวจไม่ได้" เป็นครั้งคราว
+  - `local-tools\suite_health.py`: คำสั่งทำงานเบื้องหลังได้ถึง 45 วินาที (ครั้งละคำสั่งต่อหัวข้อ) รายงานรอไม่เกินกำหนดของตัวเอง
+    (13 วินาที, คอนโซล 30 วินาที) ถ้ายังไม่เสร็จจะแสดงค่าล่าสุดพร้อมเวลาที่อ่าน (ไม่เกิน 20 นาที) และเก็บคำตอบที่มาช้าไว้ให้รอบถัดไป
+  - `server.py` อ่านค่าทั้งสองล่วงหน้า 90 วินาทีหลังเริ่ม (`prewarm_openclaw`) · ทดสอบ 14/14 และเทียบกับของจริงก่อนใช้ · สำรอง `backups\pre-openclaw-health-20261109-064928`
+  - เครื่องนี้: Telegram และ WhatsApp เชื่อมต่ออยู่ · งานตั้งเวลา 4 งาน (เปิด 2) ไม่มีงานล้มเหลว · มีข้อความขาออกที่ส่งไม่สำเร็จค้างใน OpenClaw 13 รายการ
+    (เก่าสุด 16 ก.ย. 2026 เป็น dead letter ที่ไม่ถูกส่งซ้ำและไม่กระทบการส่งตอนนี้ OpenClaw ไม่มีคำสั่งล้าง) หัวข้อนี้จึงขึ้น "ควรดู"
+  - ตรวจเพิ่ม: 13 รายการนี้อยู่ในฐานข้อมูลสถานะของ OpenClaw (คิว `outbound-prepared-v1`) · CLI มีแค่ `openclaw channels dead-letters` ของขาเข้า (ดู/ส่งซ้ำ) ไม่มีคำสั่งหรือ RPC ลบของขาออก — **ยังไม่ได้ลบ** (การลบตรงในฐานข้อมูลต้องหยุด gateway และสำรองฐานข้อมูลก่อน รอเจ้าของเครื่องเลือก)
+  - WhatsApp error 428 "Connection Terminated" เวลา 04:13 ต่อใหม่ได้เอง · watchdog "app-silent" ที่ต่อใหม่ราวทุก 2 ชม. เป็นเรื่องปกติ
+- **WhatsApp ต่อใหม่เองเมื่ออินเทอร์เน็ตกลับมา** (`local-tools\channel_watchdog.py` เริ่มโดย `server.py` 2 นาทีหลังเปิด)
+  - เหตุ: 9 พ.ย. เน็ตหายช่วงราว 07:32–07:58 OpenClaw ลองต่อ WhatsApp 12 ครั้ง (ราว 6 นาที) แล้วหยุดแบบ terminal disconnect ตอน 07:38 และไม่ลองอีก (health monitor แค่บันทึก "skipping restart" ทุก 5 นาที) ต้องสั่ง `openclaw gateway call channels.start` เอง (08:06)
+  - ตอนนี้: อ่านล็อกของ OpenClaw ทุก 1 นาที ถ้าช่องไหนหยุดแบบนี้และชื่อโดเมนของบริการกลับมาใช้ได้ จะถาม gateway ก่อนว่ายังผูกบัญชีอยู่ และหยุดเพราะเครือข่าย แล้วสั่ง `channels.start` (ไม่ logout ไม่ restart gateway) ไม่เกิน 3 ครั้ง/ชั่วโมง ห่างกันอย่างน้อย 5 นาที
+    บัญชีที่ถูก logout/ถูกแทนที่ (401/403/411/440/500), ช่องที่ OpenClaw ยังต่อเองอยู่ และช่องที่หยุดด้วยมือ จะไม่ถูกแตะ
+  - บันทึกที่ `logs\channel-watchdog.log` และ `data\channel-watchdog.json` (เวลา ชื่อช่อง ผล — ไม่มีข้อความหรือเบอร์) · ปิดได้ด้วย `QWEN_CHANNEL_WATCHDOG=0`
+  - หน้าสถานะนับการหลุดครั้งเดียวตามเวลาที่หลุดจริง (เดิมขึ้น 08:03 เพราะนับข้อความเตือนที่ซ้ำทุก 5 นาที ตอนนี้ขึ้น 07:38) และบอกว่าระบบต่อใหม่ให้ตอนไหน หรือจะต่อให้เมื่อเน็ตกลับ หรือต้องสแกน QR ใหม่
+  - ทดสอบด้วยของปลอมก่อนใช้จริง: watchdog 13/13, หน้าสถานะ 15/15 · สำรองไฟล์เดิม `backups\pre-r4-watchdog-20261109-093009`
+- **ตัวติดตั้ง Qwen Suite 1.6.2 Offline** แทนชุด 1.6.1: payload เดียวกับ Online 1.6.2 พร้อม Qwen Suite Desktop และ Ollama 0.40.15 ของเครื่องนี้
+  (`ollama.exe` + `lib` ตรวจขนาดและ CRC32 ครบทุกไฟล์) · `Qwen-Setup-Offline.exe` + 35 ไฟล์ .bin รวม 63.77 GiB · อ่าน `outputs\README-FIRST-Offline-1.6.2.txt`
+  - สร้างใหม่ (r4) ตอน 09:52 แทนชุดที่สร้างตอนเช้า — ชื่อไฟล์เดิม ค่า SHA-256 ใหม่อยู่ใน `outputs\SHA256SUMS-Offline-v1.6.2.txt` (read-me และรายการ hash ของชุดเช้าเก็บไว้เป็น `*.previous-<เวลา>`)
+  - ไฟล์ runtime อยู่ที่ `G:\QwenSuite-offline-src-1.6.2\archives\ollama-runtime.7z` (ไฟล์ของ 1.6.1 ใน `offline\archives` ไม่ได้แก้)
+  - ติดตั้งทับเครื่องที่ลง Offline 1.6.1 ไว้แล้ว ตัวติดตั้งอัปเดต Ollama ในชุด 0.32.15 → 0.40.15 ให้ (`Install-QwenSuite.ps1` ฟังก์ชัน `Update-OfflineOllamaRuntime`: หยุดเฉพาะ Ollama ที่รันจาก `<ชุด>\runtime\ollama`, เก็บของเดิมเป็น `runtime\ollama.old-<รุ่น>-<เวลา>`, ถ้าแตกไฟล์ไม่สำเร็จจะใส่ของเดิมคืนและติดตั้งต่อ)
+    ทดสอบใน sandbox แล้ว: รุ่นเก่าที่กำลังรันถูกหยุด แทน และเก็บของเดิม · รุ่นล่าสุดอยู่แล้วไม่แตะ · เครื่องใหม่แตกไฟล์ให้ · ไฟล์เสียแล้วคืนของเดิม · Ollama ตัวจริงของเครื่องนี้ไม่ถูกแตะ
+  - ตัวติดตั้ง Online 1.6.2 สร้างใหม่อีกรอบให้มีไฟล์ชุดเดียวกัน และคู่มือ `INSTALL-GUIDE-TH-1.6.2.txt` ครอบคลุมทั้ง Online และ Offline
+    (สร้างอีกครั้งรอบ r4 ให้มี watchdog และคู่มือฉบับล่าสุด · ไฟล์รอบก่อนเก็บไว้เป็น `*.previous-<เวลา>`)
+- การเปลี่ยนแปลงชุดนี้ **ยังไม่ได้ commit / push ขึ้น GitHub** — รอเจ้าของเครื่องอนุมัติ
+
 ## อัปเดต 8 พ.ย. 2026 (Qwen Suite 1.6.2)
 
 - **โมเดลใหม่ 3 ตัว** (เลือกใช้ตรงจากรายการโมเดลใน Open WebUI — ไม่ได้ผูกกับ Smart Router และไม่เปลี่ยนโปรไฟล์ `qwen-*` เดิม):
@@ -7,6 +64,7 @@
   - `gemma4:26b-a4b-it-qat` — Gemma 4 26B-A4B (MoE 4B active, QAT 4-bit)
   - `hf.co/bartowski/MiMo-V2.6-Distill-Qwen-9B-GGUF:Q4_K_M` — MiMo-V2.6 9B (GGUF จาก Hugging Face พร้อม vision projector)
     ตัว official `mimo-v2.6:9b` ใน Ollama library ตอบ 412 "requires a newer version of Ollama" กับ Ollama 0.32.15 ของเครื่องนี้
+    (9 พ.ย.: อัปเกรด Ollama แล้วเปลี่ยนไปใช้ `mimo-v2.6:9b` — ดูหัวข้ออัปเดต 9 พ.ย.)
   - preset ใน Open WebUI ใช้ system prompt / num_ctx 32768 / keep_alive 2h / think=false / เครื่องมือ Local Computer Fast เหมือน `qwen3.8:27b` Direct
   - ผลทดสอบ: ดูหัวข้อ "ผลทดสอบโมเดลใหม่ 8 พ.ย. 2026" ด้านล่างหัวข้อนี้
 - **ย้ายน้ำหนัก Qwen-Image 2.1 (32.06 GiB) ไป `G:\QwenSuite-offload\model-cache\Qwen-Image-2.1`** (ไดรฟ์ My Passport) เพื่อคืนที่ให้ E:
@@ -35,7 +93,7 @@
 | Gemma 4 26B-A4B (`gemma4:26b-a4b-it-qat`) | 15.63 GB | completion, vision, tools, thinking | ผ่าน "กรุงเทพมหานคร" | 7.18 tok/s (โหลด 16.9 s) | ผ่าน `get_weather({"city": "Chiang Mai"})` | ผ่าน (Red) | 14.97 GiB (บน P620 1.19 GiB) |
 | MiMo-V2.6 9B (`hf.co/bartowski/MiMo-V2.6-Distill-Qwen-9B-GGUF:Q4_K_M`) | 6.76 GB | tools, thinking, completion, vision | ผ่าน "กรุงเทพฯ (กรุงเทพมหานคร)" | 6.33 tok/s (โหลด 12.0 s) | ผ่าน `get_weather({"city": "เชียงใหม่"})` | ผ่าน (Red) | 7.02 GiB (บน P620 1.55 GiB) |
 
-- MiMo-V2.6 9B: ข้ามแท็ก `mimo-v2.6:9b-q4_K_M`, `mimo-v2.6:9b` เพราะ Ollama 0.32.15 ตอบ 412 (ต้องใช้ Ollama รุ่นใหม่กว่า)
+- MiMo-V2.6 9B: ข้ามแท็ก `mimo-v2.6:9b-q4_K_M`, `mimo-v2.6:9b` เพราะ Ollama 0.32.15 ตอบ 412 (ต้องใช้ Ollama รุ่นใหม่กว่า) — แก้แล้ว 9 พ.ย. ด้วย Ollama 0.40.15
 - หน่วยความจำตอนโหลดคือค่าจาก `/api/ps` ที่ num_ctx 32768 — ส่วน "บน P620" คือที่ Ollama วางไว้บน Quadro P620 (ทาง B ยังไม่ได้ปิดการ์ดนี้)
 
 ## อัปเดตโมเดล 1 ต.ค. 2026 (Qwen Suite 1.6)
@@ -58,7 +116,7 @@
   (แก้ 6 ต.ค. 2026: ชุด 1 ต.ค. บันทึกอีเมลเป็น `admin` เฉย ๆ ซึ่งช่อง Email ของหน้าเว็บเป็น `type="email"` จึงไม่ยอมส่ง — ผ่านแค่ API ·
   `Configure-Qwen-WebUI.py` รุ่นใหม่ย้ายอีเมลนั้นเป็น `admin@localhost` ทุกครั้งที่รันโดยไม่แตะรหัสผ่าน ·
   **เครื่องนี้ ณ 6 ต.ค. ยังเป็น `admin`** จนกว่าจะรันสคริปต์นั้นอีกครั้ง (`--db E:\localllm\webui-data\webui.db` ซึ่งเขียนค่าตั้งอื่นทับด้วย) หรือแก้เฉพาะอีเมลของแถวนั้นในตาราง `user` และ `auth`)
-- ข้อจำกัดที่ทราบ: `local-tools\project_store.py` ยังล็อกอิน Open WebUI ด้วย `admin@localhost` / `admin` แบบสมัยปิดล็อกอิน
+- (แก้แล้ว 9 พ.ย. 2026 — ดูหัวข้ออัปเดต 9 พ.ย.) ข้อจำกัดเดิม: `local-tools\project_store.py` ยังล็อกอิน Open WebUI ด้วย `admin@localhost` / `admin` แบบสมัยปิดล็อกอิน
   ตั้งแต่ 1.6.1 จึง sync โฟลเดอร์ ความจำ และไฟล์แนบของ Project เข้า Open WebUI ไม่ได้ (ไฟล์และ `MEMORY.md` ในเครื่องยังบันทึกครบ ได้แค่คำเตือน sync failed) — รอแก้ใน 1.6.2 เช่นให้ตัวติดตั้งออก API key ของเจ้าของเครื่องให้ local-tools
 
 หมายเหตุ: ตาราง benchmark และบันทึกวันที่เก่ากว่าด้านล่างเก็บไว้เป็นประวัติของฮาร์ดแวร์/โมเดลเดิม
@@ -530,11 +588,13 @@ R615 **ไม่รองรับ P620** (R580 เป็นรุ่นสุ�
 | Chrome ปิดตัวเองทันทีหลังติดตั้งไดรเวอร์ | nView hook กลับมา → เปลี่ยนชื่อ `nviewH64.dll`/`nviewH.dll` เป็น `.bak` อีกครั้ง |
 | อยากย้อนทุกอย่างกลับ | `QWEN_GPU_MODE=all` แล้ว `Restart-QwenOllama.ps1` · ไฟล์เดิมก่อนแก้อยู่ที่ `backups\claude-20260929-egpu\` |
 
-อย่าอัปเดต Ollama (มีตัว 0.33.2 ค้างรออยู่ในแอป tray) พร้อมกับเปลี่ยนไดรเวอร์ — เปลี่ยนทีละอย่างจะได้รู้ว่าอะไรทำให้พัง
-- ตัวติดตั้ง 0.33.2 ดาวน์โหลดไว้ที่ `%LOCALAPPDATA%\Ollama\updates_v2\...\OllamaSetup.exe` แต่จะติดตั้ง**เอง**ก็ต่อเมื่อแอป tray ถูกเปิดแบบซ่อน
-  (เช่นย้าย `disabled-startup\Ollama.lnk` กลับเข้า Startup) หรือกด "Restart to update" — ตอนนี้ไม่มีอะไรเปิดแอป tray (ตรวจ Startup, Run keys, scheduled tasks แล้ว)
+Ollama ตอนนี้เป็น **0.40.15** (อัปเกรดจาก 0.32.15 เมื่อ 9 พ.ย. 2026 ด้วยตัวติดตั้งจาก GitHub release หลังทดสอบใน sandbox — ดูหัวข้ออัปเดต 9 พ.ย. ด้านบน)
+และไม่มีตัวติดตั้งค้างรออยู่แล้ว (`OllamaSetup.exe` ใน `%LOCALAPPDATA%\Ollama\updates_v2` ถูกลบ 9 พ.ย. หลังตรวจว่ามีสำเนาที่ SHA-256 ตรงกันใน G:) — ข้อความเดิมเรื่อง 0.33.2 ที่ค้างในแอป tray ไม่เป็นจริงแล้ว
+- อย่าอัปเดต Ollama พร้อมกับเปลี่ยนไดรเวอร์ (ทาง B) — เปลี่ยนทีละอย่างจะได้รู้ว่าอะไรทำให้พัง
+- แอป tray ของ Ollama ยังห้ามเปิด (ดู "เรื่องที่ควรรู้" ข้อ 1) — ถ้าเปิด มันอาจดาวน์โหลดอัปเดตมาไว้ใน `updates_v2` อีก แล้วติดตั้ง**เอง**เมื่อกด "Restart to update"
+  หรือเมื่อถูกเปิดแบบซ่อน (เช่นย้าย `disabled-startup\Ollama.lnk` กลับเข้า Startup) · ตอนนี้ไม่มีอะไรเปิดแอป tray (ตรวจ Startup, Run keys, scheduled tasks แล้ว รวมทั้งหลังอัปเกรด 9 พ.ย.)
 - ถ้าจะปิดการอัปเดตอัตโนมัติด้วย: ตั้ง "Auto-download updates" ในแอป tray เป็นปิด — แต่ต้องทำตอนหยุดชุดนี้แล้ว (`stop-all.ps1` ก่อน เพราะเปิดแอป tray จะฆ่าเซิร์ฟเวอร์) แล้วค่อย `Restart-QwenOllama.ps1 -StartIfStopped`
-- ติดตั้งเองเมื่อพร้อม (หลังไดรเวอร์ใหม่ทดสอบผ่าน): ตอน Ollama ว่าง รันตัวติดตั้ง → มันจะปิด Ollama และเปิดแอป tray → ปิดแอป tray แล้วรัน `Restart-QwenOllama.ps1 -StartIfStopped` เพื่อให้ขั้นเลือก GPU ทำงานอีกครั้ง
+- อัปเดตครั้งต่อไป: ทำแบบ 9 พ.ย. — ทดสอบรุ่นใหม่ใน sandbox ก่อน แล้วรันตัวติดตั้งตอน Ollama ว่าง → มันจะปิด Ollama และเปิดแอป tray → ปิดแอป tray แล้วรัน `Restart-QwenOllama.ps1 -StartIfStopped` เพื่อให้ขั้นเลือก GPU ทำงานอีกครั้ง
 
 | ไฟล์ใหม่ | ทำอะไร |
 |---|---|

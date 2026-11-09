@@ -2938,4 +2938,21 @@ async def gateway_dispatch(request: Request) -> JSONResponse:
 
 
 if __name__ == "__main__":
+    # Projects that could not reach Open WebUI (it was down, or 1.6.1's sign-in problem) catch up
+    # once it answers, then every 10 minutes when something is waiting.
+    PROJECTS.start_background_sync()
+    # Suite Health: read Telegram/WhatsApp and the OpenClaw automations once, 90 s after start,
+    # so the first status report after a restart has an answer (the cold OpenClaw CLI is slow).
+    try:
+        HEALTH.prewarm_openclaw()
+    except Exception:
+        pass
+    # A channel that gave up after a network outage (WhatsApp: 12 retries, then "terminal disconnect") is started
+    # again once the internet is back - channel_watchdog.py; off with QWEN_CHANNEL_WATCHDOG=0.
+    try:
+        import channel_watchdog
+
+        channel_watchdog.start_background()
+    except Exception:
+        pass
     mcp.run(transport="streamable-http")

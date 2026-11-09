@@ -6,9 +6,11 @@ import mimetypes
 import os
 import re
 import shutil
+import sqlite3
 import stat
 import subprocess
 import threading
+import time
 import tomllib
 import unicodedata
 from collections import Counter
@@ -21,8 +23,25 @@ import requests
 
 PROJECTS_ROOT = Path(r"E:\qwen-projects")
 WEBUI_URL = "http://127.0.0.1:3000"
+SUITE_ROOT = Path(__file__).resolve().parent.parent
+# Project sync signs in to Open WebUI with the owner's API key, read from this database each time
+# it is needed (Configure-Qwen-WebUI.py creates the key). Reading it here instead of keeping a copy
+# means a key the owner regenerates in Settings > Account is picked up without any change here.
+WEBUI_DB = SUITE_ROOT / "webui-data" / "webui.db"
+# Last result of the background sync (local-tools start), shown by Suite Health. No secrets in it.
+SYNC_STATUS_PATH = SUITE_ROOT / "data" / "project-sync.json"
+# Only for a suite whose Open WebUI still runs without login (WEBUI_AUTH=False, before 1.6.1): Open
+# WebUI then signs everyone in as admin@localhost / admin. Since 1.6.1 login is required and this
+# fails, which is why projects stopped syncing until the API key was added (1.6.2).
 WEBUI_EMAIL = "admin@localhost"
 WEBUI_PASSWORD = "admin"
+# The endpoints Project sync uses; Configure-Qwen-WebUI.py limits API keys to these.
+PROJECT_SYNC_ENDPOINTS = ("/api/v1/folders", "/api/v1/memories", "/api/v1/files")
+NO_API_KEY_MESSAGE = (
+    "Open WebUI has no API key for the owner account, so Qwen cannot sign in to sync projects. "
+    "Run Repair Qwen Suite (it runs Configure-Qwen-WebUI.py, which creates the key), or in Open WebUI "
+    "turn on API keys (Admin Settings > General) and create one in Settings > Account."
+)
 DOCUMENT_EXTENSIONS = {
     ".csv",
     ".doc",
@@ -290,9 +309,65 @@ def _inline_code(text: str) -> str:
     return f"{ticks} {text} {ticks}"
 
 
+# Same choice of owner as Configure-Qwen-WebUI.py: the default admin account, else the oldest admin.
+_OWNER_SQL = """
+    SELECT id FROM user
+    ORDER BY
+      CASE WHEN lower(email) IN ('admin@localhost', 'admin') OR lower(COALESCE(username, '')) = 'admin' THEN 0
+           WHEN role = 'admin' THEN 1 ELSE 2 END,
+      created_at
+    LIMIT 1
+"""
+
+
+class OpenWebUISyncError(RuntimeError):
+    """Project sync cannot work until the owner fixes something; the message says what."""
+
+
+def read_owner_api_key(db_path: Path | None = None) -> str | None:
+    """The owner's Open WebUI API key from webui.db (read-only), or None. Never logged."""
+    path = Path(db_path or WEBUI_DB)
+    if not path.is_file():
+        return None
+    try:
+        connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True, timeout=10)
+    except sqlite3.Error:
+        return None
+    try:
+        connection.execute("PRAGMA busy_timeout=10000")
+        owner = connection.execute(_OWNER_SQL).fetchone()
+        if not owner:
+            return None
+        row = connection.execute(
+            "SELECT key FROM api_key WHERE user_id=? ORDER BY created_at DESC LIMIT 1", (owner[0],)
+        ).fetchone()
+        return str(row[0]) if row and row[0] else None
+    except sqlite3.Error:
+        return None  # e.g. an Open WebUI without the api_key table: the legacy sign-in is tried
+    finally:
+        connection.close()
+
+
+def _rewind_files(files: Any) -> None:
+    # A retried upload must send the file again from the start, not from where the first try ended.
+    for value in (files or {}).values() if isinstance(files, dict) else ():
+        handle = value[1] if isinstance(value, tuple) and len(value) > 1 else value
+        if hasattr(handle, "seek"):
+            handle.seek(0)
+
+
+def _response_detail(response: requests.Response) -> str:
+    try:
+        detail = response.json().get("detail")
+    except Exception:
+        detail = None
+    return str(detail or response.reason or response.status_code)[:200]
+
+
 class OpenWebUIClient:
-    def __init__(self, base_url: str = WEBUI_URL) -> None:
+    def __init__(self, base_url: str = WEBUI_URL, db_path: Path | None = None) -> None:
         self.base_url = base_url.rstrip("/")
+        self.db_path = Path(db_path) if db_path else None
         self._token: str | None = None
         self._lock = threading.Lock()
 
@@ -306,30 +381,46 @@ class OpenWebUIClient:
         token = response.json().get("token")
         if not token:
             raise RuntimeError("Open WebUI sign-in returned no token.")
-        self._token = token
         return token
 
-    def request(self, method: str, path: str, **kwargs: Any) -> Any:
+    def _credential(self, refresh: bool = False) -> str:
         with self._lock:
-            token = self._token or self._signin()
+            if self._token and not refresh:
+                return self._token
+            self._token = read_owner_api_key(self.db_path or WEBUI_DB)
+            if not self._token:
+                # The legacy sign-in only where Open WebUI runs without login: with login on it
+                # would fail, and failed sign-ins count against the owner's address
+                # (Open WebUI locks an address after 15 failures in 3 minutes).
+                config = requests.get(f"{self.base_url}/api/config", timeout=15).json()
+                if (config.get("features") or {}).get("auth", True):
+                    raise OpenWebUISyncError(NO_API_KEY_MESSAGE)
+                self._token = self._signin()
+            return self._token
+
+    def request(self, method: str, path: str, **kwargs: Any) -> Any:
+        timeout = kwargs.pop("timeout", 120)
         headers = dict(kwargs.pop("headers", {}) or {})
-        headers["Authorization"] = f"Bearer {token}"
-        response = requests.request(
-            method,
-            f"{self.base_url}{path}",
-            headers=headers,
-            timeout=kwargs.pop("timeout", 120),
-            **kwargs,
-        )
-        if response.status_code == 401:
-            with self._lock:
-                headers["Authorization"] = f"Bearer {self._signin()}"
+        for attempt in range(2):
+            # A 401 means the key was regenerated or deleted (or a legacy session expired):
+            # read the credential again once.
+            token = self._credential(refresh=attempt > 0)
+            headers["Authorization"] = f"Bearer {token}"
+            _rewind_files(kwargs.get("files"))
             response = requests.request(
                 method,
                 f"{self.base_url}{path}",
                 headers=headers,
-                timeout=kwargs.pop("timeout", 120),
+                timeout=timeout,
                 **kwargs,
+            )
+            if response.status_code != 401:
+                break
+        if response.status_code in (401, 403) and token.startswith("sk-"):
+            raise OpenWebUISyncError(
+                f"Open WebUI refused the owner's API key for {path}: {_response_detail(response)}. "
+                "API keys must be on (Admin Settings > General) and, when endpoint restrictions are on, "
+                "allowed for " + ", ".join(PROJECT_SYNC_ENDPOINTS) + ". Repair Qwen Suite sets this up."
             )
         response.raise_for_status()
         if not response.content:
@@ -395,9 +486,9 @@ class OpenWebUIClient:
 
 
 class ProjectStore:
-    def __init__(self) -> None:
+    def __init__(self, webui: OpenWebUIClient | None = None) -> None:
         PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
-        self.webui = OpenWebUIClient()
+        self.webui = webui or OpenWebUIClient()
         # server.py sets this to its _resolved_path so AGENTS.md reads and init scans skip the
         # same blocked paths as every other tool; raising means "blocked".
         self.path_guard: Callable[[str], Any] | None = None
@@ -588,6 +679,29 @@ class ProjectStore:
             f"Project instructions: {custom}"
         )
 
+    @staticmethod
+    def _folder_fingerprint(project_dir: Path, manifest: dict[str, Any]) -> str:
+        """What the Open WebUI folder was last given (name, instructions, paths), as a short hash.
+
+        Stored as open_webui_folder_synced after each folder sync, so a project whose settings
+        changed while Open WebUI could not be reached is recognised and brought up to date.
+        """
+        # From the manifest only: _path_entries also tests whether each path exists, which can
+        # stall on a disconnected network drive, and existence is not part of the folder settings.
+        paths = [
+            [raw.get("alias"), raw.get("path"), raw.get("access"), raw.get("description")]
+            for raw in manifest.get("configured_paths") or []
+            if isinstance(raw, dict)
+        ]
+        payload = {
+            "name": manifest.get("name"),
+            "slug": manifest.get("slug"),
+            "instructions": manifest.get("instructions", ""),
+            "path": str(project_dir),
+            "paths": paths,
+        }
+        return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
     def _ensure_native_folder(self, project_dir: Path, manifest: dict[str, Any]) -> tuple[str | None, str | None]:
         folder_id = manifest.get("open_webui_folder_id")
         if folder_id:
@@ -647,12 +761,211 @@ class ProjectStore:
             data["configured_paths"] = self._path_entries(project_dir, manifest)
             self.webui.update_folder_data(folder_id, data)
         manifest["open_webui_folder_id"] = folder_id
+        synced = self._folder_fingerprint(project_dir, manifest)
         with self._manifest_lock:
             # Re-read: the Open WebUI calls above take time and another writer may have saved.
+            # The fingerprint is of what was sent; a change saved meanwhile shows up as a mismatch.
             fresh = self._load_manifest(project_dir)
             fresh["open_webui_folder_id"] = folder_id
+            fresh["open_webui_folder_synced"] = synced
             self._save_manifest(project_dir, fresh)
         return folder_id, None
+
+    # ------------------------------------------------------------------ catching up with Open WebUI
+
+    def _pending(self, project_dir: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+        files = 0
+        for record in manifest.get("files") or []:
+            relative = str(record.get("relative_path") or "")
+            if relative and not record.get("open_webui_file_id") and (project_dir / relative).is_file():
+                files += 1
+        return {
+            "folder": (not manifest.get("open_webui_folder_id"))
+            or manifest.get("open_webui_folder_synced") != self._folder_fingerprint(project_dir, manifest),
+            "memories": sum(1 for entry in manifest.get("memory_entries") or [] if not entry.get("open_webui_memory_id")),
+            "files": files,
+        }
+
+    def pending_counts(self) -> dict[str, int]:
+        """How much is waiting to be sent to Open WebUI, over all projects."""
+        totals = {"projects": 0, "folders": 0, "memories": 0, "files": 0}
+        for manifest_path in PROJECTS_ROOT.glob("*/project.json"):
+            try:
+                pending = self._pending(manifest_path.parent, self._load_manifest(manifest_path.parent))
+            except Exception:
+                continue
+            totals["folders"] += int(bool(pending["folder"]))
+            totals["memories"] += pending["memories"]
+            totals["files"] += pending["files"]
+            totals["projects"] += int(bool(pending["folder"] or pending["memories"] or pending["files"]))
+        return totals
+
+    def sync_project(self, project: str) -> dict[str, Any]:
+        """Send Open WebUI what earlier syncs missed: folder settings, memory entries, attachments.
+
+        From 1.6.1 until 1.6.2 every sync failed (no way to sign in), so such projects exist only on
+        disk. Items that already have an Open WebUI id are skipped, and a memory whose text is already
+        stored under the project's path is linked instead of added again, so a second run adds nothing.
+        Raises OpenWebUISyncError when Open WebUI cannot be signed in to at all.
+        """
+        project_dir, manifest = self.resolve_project(project)
+        result: dict[str, Any] = {"project": manifest["slug"], "folder": "unchanged", "memories": 0, "files": 0, "errors": []}
+        if self._pending(project_dir, manifest)["folder"]:
+            try:
+                self._ensure_native_folder(project_dir, manifest)
+                result["folder"] = "synced"
+            except OpenWebUISyncError:
+                raise
+            except Exception as exc:
+                result["errors"].append(f"folder: {exc}")
+
+        entries = [entry for entry in manifest.get("memory_entries") or [] if not entry.get("open_webui_memory_id")]
+        existing: dict[str, Any] = {}
+        if entries:
+            try:
+                for item in self.webui.read_memory(path=manifest["memory_path"], limit=100):
+                    existing.setdefault(str(item.get("content") or "").strip(), item.get("id"))
+            except OpenWebUISyncError:
+                raise
+            except Exception as exc:
+                # Without the list a retry could store the same memory twice; try again next time.
+                result["errors"].append(f"memory lookup: {exc}")
+                entries = []
+        for entry in entries:
+            text = str(entry.get("content") or "").strip()
+            marker = f"[{entry.get('category') or 'note'}/{entry.get('importance') or 'normal'}] {text}"
+            memory_id = existing.get(marker)
+            if not memory_id:
+                try:
+                    memory = self.webui.add_memory(content=marker, path=manifest["memory_path"])
+                    memory_id = memory.get("id") if memory else None
+                except OpenWebUISyncError:
+                    raise
+                except Exception as exc:
+                    result["errors"].append(f"memory {entry.get('timestamp')}: {exc}")
+                    continue
+            if not memory_id:
+                continue
+            with self._manifest_lock:
+                fresh = self._load_manifest(project_dir)
+                for item in fresh.get("memory_entries") or []:
+                    if (
+                        not item.get("open_webui_memory_id")
+                        and item.get("timestamp") == entry.get("timestamp")
+                        and item.get("content") == entry.get("content")
+                    ):
+                        item["open_webui_memory_id"] = memory_id
+                        break
+                self._save_manifest(project_dir, fresh)
+            result["memories"] += 1
+
+        for record in manifest.get("files") or []:
+            relative = str(record.get("relative_path") or "")
+            if not relative or record.get("open_webui_file_id"):
+                continue
+            path = project_dir / relative
+            if not path.is_file():
+                result["errors"].append(f"file {relative}: missing on disk")
+                continue
+            digest = _sha256(path)
+            try:
+                file_id, warning = self._attach_native_file(project_dir, self._load_manifest(project_dir), path, digest)
+            except OpenWebUISyncError:
+                raise
+            except Exception as exc:
+                result["errors"].append(f"file {relative}: {exc}")
+                continue
+            if not file_id:
+                result["errors"].append(f"file {relative}: {warning}")
+                continue
+            with self._manifest_lock:
+                fresh = self._load_manifest(project_dir)
+                for item in fresh.get("files") or []:
+                    if item.get("relative_path") == relative and not item.get("open_webui_file_id"):
+                        item["open_webui_file_id"] = file_id
+                        item["sha256"] = digest
+                        item["size_bytes"] = path.stat().st_size
+                        break
+                self._save_manifest(project_dir, fresh)
+            result["files"] += 1
+        return result
+
+    def sync_pending(self) -> dict[str, Any]:
+        """sync_project for every project with something waiting; the result goes to SYNC_STATUS_PATH."""
+        summary: dict[str, Any] = {"at": _now_iso(), "status": "ok", "message": "", "projects": []}
+        for manifest_path in sorted(PROJECTS_ROOT.glob("*/project.json"), key=lambda item: item.parent.name.casefold()):
+            project_dir = manifest_path.parent
+            try:
+                manifest = self._load_manifest(project_dir)
+                pending = self._pending(project_dir, manifest)
+            except Exception as exc:
+                summary["projects"].append({"project": project_dir.name, "errors": [f"manifest: {exc}"]})
+                continue
+            if not (pending["folder"] or pending["memories"] or pending["files"]):
+                continue
+            try:
+                summary["projects"].append(self.sync_project(manifest["slug"]))
+            except OpenWebUISyncError as exc:
+                summary.update(status="error", message=str(exc))
+                break
+            except Exception as exc:
+                summary["projects"].append({"project": manifest.get("slug"), "errors": [f"{type(exc).__name__}: {exc}"]})
+        if summary["status"] == "ok" and any(item.get("errors") for item in summary["projects"]):
+            summary["status"] = "partial"
+        summary["pending_after"] = self.pending_counts()
+        self._write_sync_status(summary)
+        return summary
+
+    @staticmethod
+    def _write_sync_status(summary: dict[str, Any]) -> None:
+        try:
+            _write_json(SYNC_STATUS_PATH, summary)
+        except OSError:
+            pass
+
+    def start_background_sync(self, delay: float = 20.0, interval: float = 600.0) -> None:
+        """Keep Open WebUI caught up: once it answers after local-tools starts, then every 10 minutes.
+
+        local-tools starts before Open WebUI (start-webui.ps1), so each round first checks /health.
+        A round only does work when a project has something waiting (a sync that failed because
+        Open WebUI was down, or settings changed meanwhile), so idle rounds cost a few file reads.
+        """
+
+        def healthy() -> bool:
+            try:
+                return requests.get(f"{self.webui.base_url}/health", timeout=5).ok
+            except Exception:
+                return False
+
+        def run() -> None:
+            time.sleep(delay)
+            first = True
+            while True:
+                try:
+                    if healthy():
+                        counts = self.pending_counts()
+                        if first or counts["projects"]:
+                            summary = self.sync_pending()
+                            if first or summary["status"] != "ok" or summary["projects"]:
+                                done = [item for item in summary["projects"] if not item.get("errors")]
+                                print(
+                                    f"[project-sync] {summary['status']}: {len(done)} project(s) brought up to date, "
+                                    f"still waiting: {summary['pending_after']} {summary['message']}".rstrip(),
+                                    flush=True,
+                                )
+                            first = False
+                    elif first:
+                        self._write_sync_status({
+                            "at": _now_iso(),
+                            "status": "waiting",
+                            "message": "Open WebUI is not answering yet; the sync runs when it does.",
+                            "pending_after": self.pending_counts(),
+                        })
+                except Exception as exc:
+                    self._write_sync_status({"at": _now_iso(), "status": "error", "message": f"{type(exc).__name__}: {exc}"})
+                time.sleep(interval if not first else 15)
+
+        threading.Thread(target=run, name="project-sync", daemon=True).start()
 
     def create_project(self, name: str, description: str = "", instructions: str = "") -> dict[str, Any]:
         slug = _slugify(name)

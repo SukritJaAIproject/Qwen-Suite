@@ -8,6 +8,10 @@ Rules every check follows:
 - read-only: no restarts, no writes, nothing that makes Ollama load or run a model;
 - its own time limit; a failure becomes status "unknown" instead of an exception, and the
   whole report is cut off at DEADLINE_S so a caller never waits longer than ~15 s;
+- a slow OpenClaw CLI call (Node loads the whole CLI: ~3 s warm, 6 s+ cold, over 10 s beside
+  the other heavy checks) keeps running in the background up to OPENCLAW_CLI_TIMEOUT_S; the
+  report waits only until its deadline and otherwise shows the last good answer with its time,
+  and the late answer is kept for the next report instead of being thrown away;
 - the output carries statuses, counts and times only - never tokens, keys, phone numbers,
   chat/account IDs or free config values (free text from logs passes through _redact).
 
@@ -62,6 +66,9 @@ EXPECTED_MAX_LOADED = int(os.environ.get("QWEN_EXPECTED_MAX_LOADED", "2") or 2) 
 TARGET_GPU_PATH = (os.environ.get("QWEN_GPU_PATH", "B") or "B").strip().upper()
 
 DEADLINE_S = 13.0
+SCRIPT_DEADLINE_S = 30.0  # console run (Test-QwenSuite.ps1): nothing is kept between runs, so wait longer
+OPENCLAW_CLI_TIMEOUT_S = 45.0  # hard limit of one OpenClaw CLI call (the process tree is killed after it)
+OPENCLAW_STALE_S = 20 * 60  # a last good OpenClaw answer older than this is not shown any more
 DISK_WARN_GB = 10.0
 DISK_BAD_GB = 3.0
 OAUTH_WARN_DAYS = 14
@@ -243,6 +250,101 @@ class _Shared:
         if not ok:
             raise value
         return value
+
+
+class _SlowCall:
+    """One run per key at a time, in its own thread. A run outlives the report that started
+    it, so an answer that comes after the report's deadline is kept for the next report."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._running: dict[str, threading.Event] = {}
+        self._last: dict[str, tuple[float, bool, Any]] = {}  # key -> (finished at, ok, value or error)
+        self._good: dict[str, tuple[float, Any]] = {}  # key -> (finished at, value) of the last success
+
+    def _work(self, key: str, fn: Callable[[], Any], done: threading.Event) -> None:
+        try:
+            ok, value = True, fn()
+        except Exception as exc:  # kept and raised to whoever asks
+            ok, value = False, exc
+        with self._lock:
+            stamp = _now()
+            self._last[key] = (stamp, ok, value)
+            if ok:
+                self._good[key] = (stamp, value)
+            if self._running.get(key) is done:
+                del self._running[key]
+        done.set()
+
+    def start(self, key: str, fn: Callable[[], Any]) -> threading.Event:
+        with self._lock:
+            run = self._running.get(key)
+            if run is None:
+                run = self._running[key] = threading.Event()
+                threading.Thread(target=self._work, args=(key, fn, run), name="suite-health-" + key,
+                                 daemon=True).start()
+            return run
+
+    def get(self, key: str, fn: Callable[[], Any], wait_s: float, label: str,
+            reuse_s: float = 0.0) -> tuple[Any, float, bool]:
+        """(value, finished at, live). live=False means the run is still going and this is the
+        last good answer (at most OPENCLAW_STALE_S old); with nothing to show the call raises
+        the newest error or a TimeoutError. reuse_s > 0 accepts an answer that finished that
+        recently instead of starting a run."""
+        with self._lock:
+            last = self._last.get(key)
+            if reuse_s > 0 and last and last[1] and _now() - last[0] <= reuse_s:
+                return last[2], last[0], True
+        run = self.start(key, fn)
+        if run.wait(max(0.0, wait_s)):
+            with self._lock:
+                stamp, ok, value = self._last[key]
+            if ok:
+                return value, stamp, True
+            raise value
+        with self._lock:
+            last, good = self._last.get(key), self._good.get(key)
+        if last and last[1] and good and _now() - good[0] <= OPENCLAW_STALE_S:
+            return good[1], good[0], False
+        if last and not last[1]:
+            raise TimeoutError(f"{label} ยังไม่ตอบภายใน {wait_s:.0f} วินาที; ครั้งก่อนเสีย: "
+                               + _redact(f"{type(last[2]).__name__}: {last[2]}", 100))
+        raise TimeoutError(f"{label} ยังไม่ตอบภายใน {wait_s:.0f} วินาที "
+                           "(ยังถามต่อเบื้องหลัง ผลจะขึ้นในการตรวจรอบถัดไป)")
+
+    def wait_running(self, timeout: float) -> None:
+        """Script mode: let runs still going finish (their own timeout bounds this) so no Node
+        process is left behind when the interpreter exits."""
+        end = time.monotonic() + timeout
+        with self._lock:
+            runs = list(self._running.values())
+        for run in runs:
+            run.wait(max(0.0, end - time.monotonic()))
+
+
+_SLOW = _SlowCall()
+
+
+def _wait_left(ctx: dict, reserve: float = 1.0) -> float:
+    """How long a check may still wait for a slow helper and finish before the report's deadline."""
+    deadline_at = ctx.get("deadline_at")
+    if deadline_at is None:
+        return DEADLINE_S - reserve
+    return max(0.0, deadline_at - time.monotonic() - reserve)
+
+
+def _clock(ts: float) -> str:
+    try:
+        return datetime.fromtimestamp(ts).strftime("%H:%M:%S")
+    except (OverflowError, OSError, ValueError):
+        return "?"
+
+
+def _late_note(as_of: float, live: bool) -> str:
+    if live:
+        return ""
+    return (f" · ข้อมูลเมื่อ {_clock(as_of)} ({_fmt_duration(_now() - as_of)}ก่อน)"
+            " — gateway ตอบช้า กำลังอ่านค่าใหม่เบื้องหลัง")
 
 
 # --------------------------------------------------------------------------- ports
@@ -1170,7 +1272,27 @@ def _openclaw_log_dir() -> Path:
     return candidates[0]
 
 
+# "[whatsapp:default] health-monitor: skipping restart, terminal-disconnect" is repeated every 5 minutes for as
+# long as the channel stays down; the event itself is the channel giving up ("after 12/12 attempts",
+# "auto-restart skipped, terminal disconnect"). One outage counts once, at the time it happened.
 _RE_TERMINAL = re.compile(r"\[(\w+):[^\]]*\][^\n]*terminal-disconnect")
+_RE_TERMINAL_EVENT = re.compile(r"auto-restart skipped, terminal disconnect|after \d+/\d+ attempts", re.I)
+_RE_PROVIDER_START = re.compile(r"starting provider|channel started|provider started", re.I)
+# a session the service ended on purpose needs a new login - restarting the channel cannot fix it (WhatsApp/Baileys:
+# 401 logged out, 403 forbidden, 411 multi-device mismatch, 440 replaced by another session, 500 bad session).
+# Network codes such as 408/428/503/515 and DNS/socket errors are what a restart is for.
+RE_CHANNEL_NEEDS_LOGIN = re.compile(
+    r"(?i)logged ?out|unauthori[sz]ed|\b(?:401|403|411|440|500)\b|conflict|replaced|banned|bad ?session|multi-?device")
+
+
+def channel_needs_login(state: dict[str, Any]) -> bool:
+    """Gateway health of one channel says the account is not linked any more (new QR / token needed)."""
+    return (state.get("linked") is False or state.get("statusState") not in (None, "linked")
+            or bool(RE_CHANNEL_NEEDS_LOGIN.search(str(state.get("lastError") or ""))))
+
+
+def channel_watchdog_enabled() -> bool:
+    return (os.environ.get("QWEN_CHANNEL_WATCHDOG", "1") or "1").strip() != "0"
 
 
 def parse_openclaw_log(directory: Path | None = None) -> dict[str, Any]:
@@ -1193,6 +1315,16 @@ def parse_openclaw_log(directory: Path | None = None) -> dict[str, Any]:
         return channels.setdefault(name, {"terminal_disconnects": 0, "last_terminal_disconnect": None,
                                           "last_start": None, "warnings": 0, "errors": 0, "last_problem": None})
 
+    down: set[str] = set()  # channels in a terminal outage that is already counted
+
+    def terminal(name: str, ts: float | None) -> None:
+        if name in down:
+            return
+        down.add(name)
+        c = ch(name)
+        c["terminal_disconnects"] += 1
+        c["last_terminal_disconnect"] = ts
+
     for line in raw.splitlines():
         if not line.startswith("{"):
             continue
@@ -1207,15 +1339,17 @@ def parse_openclaw_log(directory: Path | None = None) -> dict[str, Any]:
         level = int(meta.get("logLevelId") or 0)
         tm = _RE_TERMINAL.search(msg or "")
         if tm:
-            c = ch(tm.group(1).lower())
-            c["terminal_disconnects"] += 1
-            c["last_terminal_disconnect"] = ts
+            terminal(tm.group(1).lower(), ts)
             continue
         sub = re.search(r"channels/(\w+)", name)
         if sub:
-            c = ch(sub.group(1).lower())
-            if "starting provider" in (msg or ""):
+            cname = sub.group(1).lower()
+            c = ch(cname)
+            if _RE_PROVIDER_START.search(msg or ""):
                 c["last_start"] = ts
+                down.discard(cname)
+            if _RE_TERMINAL_EVENT.search(msg or ""):
+                terminal(cname, ts)
             if level >= 5:
                 c["errors"] += 1
                 c["last_problem"] = ts
@@ -1234,11 +1368,11 @@ _CHANNEL_FIELDS = ("enabled", "configured", "running", "connected", "lifecycle",
                    "linked", "reconnectAttempts", "restartPending")
 
 
-def _gateway_health() -> dict[str, Any]:
-    code, out, err = _run(_openclaw_argv("gateway", "call", "health", "--json"), timeout=10,
+def _gateway_health_now() -> dict[str, Any]:
+    code, out, err = _run(_openclaw_argv("gateway", "call", "health", "--json"), timeout=OPENCLAW_CLI_TIMEOUT_S,
                           cwd=str(OPENCLAW_RUNTIME) if OPENCLAW_RUNTIME.is_dir() else None)
     if code is None:
-        raise TimeoutError("openclaw gateway call health ไม่ตอบภายใน 10 วินาที")
+        raise TimeoutError(f"openclaw gateway call health ไม่ตอบภายใน {OPENCLAW_CLI_TIMEOUT_S:.0f} วินาที")
     data = _json_from_output(out)
     if not isinstance(data, dict):
         raise ValueError("unexpected health output")
@@ -1253,12 +1387,43 @@ def _gateway_health() -> dict[str, Any]:
                 item[k] = _fmt_time(value[k] / 1000)
         if value.get("lastError"):
             item["lastError"] = _redact(value["lastError"], 160)
+        if "terminalDisconnect" in value:
+            item["terminal"] = bool(value.get("terminalDisconnect"))
         channels[str(name)] = item
-    failed = [(str(q.get("queueName")), int(q.get("count") or 0))
-              for q in ((data.get("deliveryQueues") or {}).get("failed") or []) if isinstance(q, dict)]
+    failed_queues = [q for q in ((data.get("deliveryQueues") or {}).get("failed") or []) if isinstance(q, dict)]
+    failed = [(str(q.get("queueName")), int(q.get("count") or 0)) for q in failed_queues]
+    oldest = [q["oldestFailedAt"] for q in failed_queues if isinstance(q.get("oldestFailedAt"), (int, float))]
     return {"channels": channels, "failed_deliveries": sum(c for _, c in failed),
+            "oldest_failed": _fmt_time(min(oldest) / 1000) if oldest else None,
             "event_loop_degraded": bool((data.get("eventLoop") or {}).get("degraded")),
             "labels": data.get("channelLabels") or {}}
+
+
+def _gateway_health(ctx: dict | None = None) -> tuple[dict[str, Any], float, bool]:
+    ctx = ctx or {}
+    return _SLOW.get("gateway_health", _gateway_health_now, _wait_left(ctx), "openclaw gateway call health",
+                     reuse_s=0.0 if ctx.get("fresh") else CHECKS["channels"]["ttl"])
+
+
+CHANNEL_WATCHDOG_STATUS = SUITE_ROOT / "data" / "channel-watchdog.json"
+
+
+def _watchdog_events() -> list[dict[str, Any]]:
+    """Today's actions of local-tools\\channel_watchdog.py (it restarts a channel that gave up after a network
+    outage); times, channel names and outcomes only."""
+    try:
+        data = json.loads(CHANNEL_WATCHDOG_STATUS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    today = datetime.now().strftime("%Y-%m-%d")
+    return [e for e in data.get("events") or [] if isinstance(e, dict) and str(e.get("time", "")).startswith(today)]
+
+
+def _event_ts(ev: dict[str, Any]) -> float:
+    try:
+        return datetime.strptime(str(ev.get("time") or ""), "%Y-%m-%d %H:%M:%S").timestamp()
+    except ValueError:
+        return 0.0
 
 
 def check_channels(ctx: dict) -> dict:
@@ -1266,13 +1431,17 @@ def check_channels(ctx: dict) -> dict:
         log = parse_openclaw_log()
     except Exception as exc:
         log = {"file": None, "channels": {}, "error": _redact(exc, 100)}
+    as_of, live_now = None, True
     try:
-        rpc: dict[str, Any] | None = _gateway_health()
+        rpc, as_of, live_now = _gateway_health(ctx)
         rpc_error = None
     except Exception as exc:
-        rpc, rpc_error = None, _redact(exc, 120)
+        rpc, rpc_error = None, _redact(exc, 160)
+    # the gateway is only slow: its answer is still on the way and comes with the next report
+    pending = rpc is None and bool(rpc_error) and "ยังไม่ตอบภายใน" in rpc_error
     log_ch = log.get("channels") or {}
     names = sorted(set((rpc or {}).get("channels", {})) | set(log_ch))
+    wd = _watchdog_events()
     rows, bits, worst = [], [], OK
 
     def bump(status: str) -> None:
@@ -1298,14 +1467,31 @@ def check_channels(ctx: dict) -> dict:
                 bits.append(f"{label}: ปิดใช้งาน")
                 continue
             healthy = bool(live.get("running")) and bool(live.get("connected"))
+            # the watchdog's actions since the latest outage (an earlier outage's actions say nothing about this one)
+            td_ts = hist.get("last_terminal_disconnect") or 0.0
+            mine = [e for e in wd if e.get("channel") == name and _event_ts(e) >= td_ts - 5]
             if not healthy:
                 bump(BAD)
                 state = live.get("healthState") or live.get("lifecycle") or "ไม่ได้เชื่อมต่อ"
-                bits.append(f"{label}: หลุด ({_redact(state, 40)})")
+                txt = f"{label}: หลุด ({_redact(state, 40)})"
+                last_ev = mine[-1] if mine else {}
+                if channel_needs_login(live) or last_ev.get("action") == "needs-login":
+                    txt += " — ต้องเชื่อมบัญชีใหม่ (สแกน QR)" if name == "whatsapp" else " — ต้องเชื่อมบัญชี/ตั้งค่าใหม่"
+                elif last_ev.get("action") in ("restart-failed", "restart-not-connected"):
+                    txt += (f" — ระบบลองต่อใหม่ให้แล้วตอน {str(last_ev.get('time', ''))[11:16]} แต่ยังไม่ติด"
+                            " จะลองอีกเป็นระยะ (ไม่เกิน 3 ครั้งต่อชั่วโมง)")
+                elif hist.get("terminal_disconnects"):
+                    txt += (" — ระบบจะต่อใหม่ให้เองเมื่ออินเทอร์เน็ตกลับมา" if channel_watchdog_enabled()
+                            else " — การต่อใหม่อัตโนมัติปิดอยู่ (QWEN_CHANNEL_WATCHDOG=0)")
+                bits.append(txt)
             else:
                 txt = f"{label}: เชื่อมต่ออยู่"
                 last_td = _fmt_time(hist.get("last_terminal_disconnect"))
-                if hist.get("terminal_disconnects") and last_td:
+                fixed = [e for e in mine if e.get("action") == "restarted"]
+                if hist.get("terminal_disconnects") and last_td and fixed:
+                    txt += (f" (วันนี้หลุดตอน {last_td[-5:]} แล้วระบบต่อใหม่ให้เองตอน "
+                            f"{str(fixed[-1].get('time', ''))[11:16]})")
+                elif hist.get("terminal_disconnects") and last_td:
                     txt += f" (วันนี้เคยหลุดแบบไม่ต่อใหม่เอง ล่าสุด {last_td[-5:]} แล้วกลับมา)"
                 bits.append(txt)
         else:
@@ -1313,6 +1499,9 @@ def check_channels(ctx: dict) -> dict:
             if last_td and (not last_start or last_td > last_start):
                 bump(BAD)
                 bits.append(f"{label}: หลุดแบบไม่ต่อใหม่เอง (terminal-disconnect ล่าสุด {_fmt_time(last_td)})")
+            elif pending:
+                bump(UNKNOWN)
+                bits.append(f"{label}: สถานะสดยังไม่มา (gateway ตอบช้า กำลังอ่านต่อเบื้องหลัง ผลจะขึ้นในการตรวจรอบถัดไป)")
             else:
                 bump(UNKNOWN)
                 bits.append(f"{label}: สถานะสดไม่ทราบ (ถาม gateway ไม่ได้)")
@@ -1320,41 +1509,66 @@ def check_channels(ctx: dict) -> dict:
     if rpc is not None:
         if rpc.get("failed_deliveries"):
             bump(WARN)
-            bits.append(f"ข้อความขาออกที่ส่งไม่สำเร็จค้างในคิว {rpc['failed_deliveries']} รายการ")
+            # dead letters: OpenClaw keeps them for its retention period and does not resend them
+            since = f" (เก่าสุด {rpc['oldest_failed']})" if rpc.get("oldest_failed") else ""
+            bits.append(f"ข้อความขาออกที่ส่งไม่สำเร็จค้างในคิว {rpc['failed_deliveries']} รายการ{since}")
         if rpc.get("event_loop_degraded"):
             bump(WARN)
             bits.append("OpenClaw gateway ตอบช้า (event loop degraded)")
         extra["failed_deliveries"] = rpc.get("failed_deliveries")
+        extra["oldest_failed_delivery"] = rpc.get("oldest_failed")
+    if as_of is not None:
+        extra["live_as_of"] = _fmt_time(as_of)
+    if pending or not live_now:
+        extra["pending_refresh"] = True  # report() does not cache this one
     if not names:
         if rpc_error and not _port_open(18789):
             return _result(BAD, "OpenClaw gateway ไม่ได้รัน (พอร์ต 18789 ปิด)", log_file=log.get("file"))
-        return _result(UNKNOWN, "ไม่พบข้อมูลช่องทาง (" + (rpc_error or "ไม่มีล็อก") + ")", log_file=log.get("file"))
-    return _result(worst, " · ".join(bits), channels=rows, log_file=log.get("file"), live_source=rpc is not None,
+        return _result(UNKNOWN, "ไม่พบข้อมูลช่องทาง (" + (rpc_error or "ไม่มีล็อก") + ")", log_file=log.get("file"),
+                       **extra)
+    if wd:
+        extra["watchdog_today"] = wd[-5:]
+    return _result(worst, " · ".join(bits) + (_late_note(as_of, live_now) if as_of is not None else ""),
+                   channels=rows, log_file=log.get("file"), live_source=rpc is not None,
                    live_error=rpc_error, **extra)
 
 
 # --------------------------------------------------------------------------- automations
 
-def _list_automations() -> dict[str, Any]:
+def _list_automations_now() -> dict[str, Any]:
     cwd = str(OPENCLAW_RUNTIME) if OPENCLAW_RUNTIME.is_dir() else None
-    code, out, err = _run(_openclaw_argv("automations", "list", "--all", "--json"), timeout=10, cwd=cwd)
+    code, out, err = _run(_openclaw_argv("automations", "list", "--all", "--json"), timeout=OPENCLAW_CLI_TIMEOUT_S,
+                          cwd=cwd)
     if code is None:
-        raise TimeoutError("openclaw automations list ไม่ตอบภายใน 10 วินาที")
+        raise TimeoutError(f"openclaw automations list ไม่ตอบภายใน {OPENCLAW_CLI_TIMEOUT_S:.0f} วินาที")
     if code != 0 and re.search(r"unknown command|too many arguments", err + out, re.I):
-        code, out, err = _run(_openclaw_argv("cron", "list", "--all", "--json"), timeout=8, cwd=cwd)
+        code, out, err = _run(_openclaw_argv("cron", "list", "--all", "--json"), timeout=OPENCLAW_CLI_TIMEOUT_S,
+                              cwd=cwd)
         if code is None:
             raise TimeoutError("openclaw cron list ไม่ตอบ")
     data = _json_from_output(out)
     return data if isinstance(data, dict) else {"jobs": data}
 
 
+def _list_automations(ctx: dict | None = None) -> tuple[dict[str, Any], float, bool]:
+    ctx = ctx or {}
+    return _SLOW.get("automations", _list_automations_now, _wait_left(ctx), "openclaw automations list",
+                     reuse_s=0.0 if ctx.get("fresh") else CHECKS["automations"]["ttl"])
+
+
 def check_automations(ctx: dict) -> dict:
     try:
-        data = _list_automations()
+        data, as_of, live_now = _list_automations(ctx)
     except Exception as exc:
         if not _port_open(18789):
             return _result(UNKNOWN, "OpenClaw gateway ไม่ได้รัน อ่านรายการงานตั้งเวลาไม่ได้")
-        return _result(UNKNOWN, "อ่านรายการงานตั้งเวลาไม่ได้: " + _redact(exc, 100))
+        if "ยังไม่ตอบภายใน" in str(exc):  # only slow: the answer comes with the next report
+            return _result(UNKNOWN, "รายการงานตั้งเวลายังไม่มา: " + _redact(exc, 160), pending_refresh=True)
+        return _result(UNKNOWN, "อ่านรายการงานตั้งเวลาไม่ได้: " + _redact(exc, 160))
+    note = _late_note(as_of, live_now)
+    extra: dict[str, Any] = {"live_as_of": _fmt_time(as_of)}
+    if not live_now:
+        extra["pending_refresh"] = True
     jobs, bits = [], []
     worst = OK
     for job in data.get("jobs") or []:
@@ -1384,8 +1598,8 @@ def check_automations(ctx: dict) -> dict:
     enabled_count = sum(j["enabled"] for j in jobs)
     head = f"{len(jobs)} งาน (เปิด {enabled_count})"
     if bits:
-        return _result(worst, head + " · " + " · ".join(bits), jobs=jobs)
-    return _result(OK, head + " · ไม่มีงานที่ล้มเหลวล่าสุด", jobs=jobs)
+        return _result(worst, head + " · " + " · ".join(bits) + note, jobs=jobs, **extra)
+    return _result(OK, head + " · ไม่มีงานที่ล้มเหลวล่าสุด" + note, jobs=jobs, **extra)
 
 
 # --------------------------------------------------------------------------- Open WebUI OAuth
@@ -1465,6 +1679,70 @@ def check_oauth(ctx: dict) -> dict:
         return _result(worst, " · ".join(bits), providers=providers)
     return _result(OK, " · ".join(f"{p['provider']} หมดอายุ {p['earliest_expiry'][:10] if p['earliest_expiry'] else '?'}"
                                   for p in providers), providers=providers)
+
+
+# --------------------------------------------------------------------------- Project sync
+
+PROJECT_SYNC_STATUS = SUITE_ROOT / "data" / "project-sync.json"
+PROJECT_SYNC_ENDPOINTS = ("/api/v1/folders", "/api/v1/memories", "/api/v1/files")
+_OWNER_SQL = (
+    "SELECT id FROM user ORDER BY CASE WHEN lower(email) IN ('admin@localhost','admin') "
+    "OR lower(COALESCE(username,''))='admin' THEN 0 WHEN role='admin' THEN 1 ELSE 2 END, created_at LIMIT 1"
+)
+
+
+def check_project_sync(ctx: dict) -> dict:
+    """Projects reaching Open WebUI (folders, memories, attachments): broken from 1.6.1 to 1.6.2."""
+    if not WEBUI_DB.is_file():
+        return _result(UNKNOWN, "ไม่พบฐานข้อมูล Open WebUI")
+    try:
+        con = sqlite3.connect("file:" + WEBUI_DB.as_posix() + "?mode=ro", uri=True, timeout=2)
+    except sqlite3.Error as exc:
+        return _result(UNKNOWN, "เปิดฐานข้อมูลแบบอ่านอย่างเดียวไม่ได้: " + _redact(exc, 80))
+    try:
+        con.execute("PRAGMA query_only = 1")
+
+        def cfg(key: str) -> Any:
+            row = con.execute("SELECT value FROM config WHERE key=?", (key,)).fetchone()
+            try:
+                return json.loads(row[0]) if row else None
+            except (TypeError, ValueError):
+                return row[0]
+
+        enabled = cfg("auth.enable_api_keys") is True
+        restricted = cfg("auth.api_key.endpoint_restrictions") is True
+        allowed = [p.strip() for p in str(cfg("auth.api_key.allowed_endpoints") or "").split(",") if p.strip()]
+        owner = con.execute(_OWNER_SQL).fetchone()
+        # existence only - the key column is never selected
+        has_key = bool(owner) and con.execute("SELECT 1 FROM api_key WHERE user_id=?", (owner[0],)).fetchone() is not None
+    except sqlite3.Error as exc:
+        return _result(UNKNOWN, "อ่านค่า API key ของ Open WebUI ไม่ได้: " + _redact(exc, 80))
+    finally:
+        con.close()
+    missing = [p for p in PROJECT_SYNC_ENDPOINTS if restricted and p not in allowed]
+    try:
+        last = json.loads(PROJECT_SYNC_STATUS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        last = {}
+    pending = last.get("pending_after") or {}
+    details = {"api_keys_enabled": enabled, "endpoint_restrictions": restricted, "owner_key": has_key,
+               "last_run": last.get("at"), "last_status": last.get("status"), "pending": pending}
+    fix = " — รัน Repair Qwen Suite (หรือ Configure-Qwen-WebUI.py) เพื่อตั้งค่าให้"
+    if not enabled:
+        return _result(BAD, "Project ไม่ sync เข้า Open WebUI: ปิด API keys อยู่ (Admin Settings › General)" + fix, **details)
+    if not has_key:
+        return _result(BAD, "Project ไม่ sync เข้า Open WebUI: บัญชีเจ้าของเครื่องไม่มี API key" + fix, **details)
+    if missing:
+        return _result(BAD, "Project ไม่ sync เข้า Open WebUI: API key ถูกจำกัด endpoint และไม่รวม " + ", ".join(missing) + fix, **details)
+    if last.get("status") == "error":
+        return _result(WARN, "sync ล่าสุดล้มเหลว: " + _redact(last.get("message"), 160), **details)
+    waiting = int(pending.get("projects") or 0)
+    if waiting:
+        return _result(WARN, f"มี {waiting} Project รอ sync (โฟลเดอร์ {pending.get('folders', 0)}, ความจำ "
+                             f"{pending.get('memories', 0)}, ไฟล์ {pending.get('files', 0)}) — ลองใหม่ทุก 10 นาที", **details)
+    if not last:
+        return _result(OK, "พร้อม sync (ยังไม่มีผลรอบแรก — เริ่มหลัง local-tools และ Open WebUI ขึ้นครบ)", **details)
+    return _result(OK, "Project sync เข้า Open WebUI ใช้ได้ (ตรวจล่าสุด " + str(last.get("at", ""))[:16].replace("T", " ") + ")", **details)
 
 
 # --------------------------------------------------------------------------- README vs tools
@@ -1621,6 +1899,7 @@ CHECKS: dict[str, dict[str, Any]] = {
     "channels": {"title": "Telegram / WhatsApp", "fn": check_channels, "ttl": 30, "heavy": True},
     "automations": {"title": "งานตั้งเวลา OpenClaw", "fn": check_automations, "ttl": 60, "heavy": True},
     "oauth": {"title": "OAuth ใน Open WebUI", "fn": check_oauth, "ttl": 300},
+    "project_sync": {"title": "Project sync เข้า Open WebUI", "fn": check_project_sync, "ttl": 60},
     "readme_tools": {"title": "README กับจำนวน tools", "fn": check_readme_tools, "ttl": 60},
     "payload": {"title": "payload ตัวติดตั้ง", "fn": check_payload, "ttl": 300, "heavy": True},
     "processes": {"title": "โปรเซสค้าง", "fn": check_processes, "ttl": 15},
@@ -1668,7 +1947,7 @@ def report(only: str | list[str] | None = None, fresh: bool = False,
             else:
                 todo.append(key)
         if todo:
-            ctx = {"shared": _Shared(), "tool_count": tool_count}
+            ctx = {"shared": _Shared(), "tool_count": tool_count, "fresh": fresh, "deadline_at": started + deadline}
             pool = ThreadPoolExecutor(max_workers=len(todo), thread_name_prefix="suite-health")
             futures = {key: pool.submit(CHECKS[key]["fn"], ctx) for key in todo}
             wait(list(futures.values()), timeout=max(1.0, deadline - (time.monotonic() - started)))
@@ -1678,7 +1957,10 @@ def report(only: str | list[str] | None = None, fresh: bool = False,
                     continue
                 try:
                     res = fut.result()
-                    _CACHE[key] = (_now(), time.perf_counter(), res)
+                    # an answer still on its way (OpenClaw CLI) is not cached: the next report
+                    # picks up the late answer instead of this placeholder
+                    if not (res.get("details") or {}).get("pending_refresh"):
+                        _CACHE[key] = (_now(), time.perf_counter(), res)
                     results[key] = res
                 except Exception as exc:
                     results[key] = _result(UNKNOWN, "ตรวจไม่สำเร็จ: " + _redact(f"{type(exc).__name__}: {exc}", 120))
@@ -1696,6 +1978,22 @@ def report(only: str | list[str] | None = None, fresh: bool = False,
             "checked_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "took_s": round(time.monotonic() - started, 2), "page": STATUS_PAGE,
             "checks": ordered, "problems": problems}
+
+
+def prewarm_openclaw(delay: float = 90.0) -> None:
+    """Server start: read the OpenClaw state once in the background a little later, so the first
+    report after a restart has an answer and Node's files are warm. Read-only, never raises."""
+
+    def runner() -> None:
+        time.sleep(max(0.0, delay))
+        try:
+            if _port_open(18789):
+                _SLOW.start("gateway_health", _gateway_health_now)
+                _SLOW.start("automations", _list_automations_now)
+        except Exception:
+            pass
+
+    threading.Thread(target=runner, name="suite-health-prewarm", daemon=True).start()
 
 
 def compact(rep: dict[str, Any]) -> dict[str, Any]:
@@ -1733,7 +2031,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         pass
     try:
-        rep = report(only=args.only or None, fresh=True)
+        rep = report(only=args.only or None, fresh=True, deadline=SCRIPT_DEADLINE_S)
     except ValueError as exc:
         print(f"เลือกหัวข้อไม่ถูกต้อง ({exc})")
         return 3
@@ -1743,6 +2041,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(compact(rep), ensure_ascii=False, indent=2, default=str))
     else:
         print(format_text(rep))
+    sys.stdout.flush()
+    _SLOW.wait_running(OPENCLAW_CLI_TIMEOUT_S + 5)
     return exit_code(rep)
 
 
